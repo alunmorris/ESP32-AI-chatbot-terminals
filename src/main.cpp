@@ -2,6 +2,7 @@
 // 270226 Initial scaffold
 // 270226 Display init, constants, backlight
 // 270226 Keyboard rendering
+// 270226 Input bar rendering
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -138,6 +139,44 @@ void drawKeyboard() {
     drawKey(SCREEN_W - CLR_W - 2, row4Y, CLR_W,  KEY_H, "CLR",   COL_BTN_BG, COL_BTN_TEXT);
 }
 
+// --- Input buffer ---
+char inputBuf[128] = {0};
+int  inputLen      = 0;
+
+void drawInputBar() {
+    int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
+    int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
+
+    tft.fillRect(0, barY, SCREEN_W, barH, COL_IBAR_BG);
+
+    // Prompt marker
+    tft.setTextColor(COL_IBAR_TEXT, COL_IBAR_BG);
+    tft.setTextSize(1);
+    tft.setCursor(2, barY + (barH - 8) / 2);
+    tft.print("> ");
+
+    // Input text (truncate if too long to fit)
+    int maxChars = (SCREEN_W - 60) / 6;  // leave room for Send button
+    char display[54] = {0};
+    int start = (inputLen > maxChars) ? inputLen - maxChars : 0;
+    strncpy(display, inputBuf + start, maxChars);
+    tft.print(display);
+
+    // Send button
+    tft.fillRect(SCREEN_W - 46, barY + 2, 44, barH - 4, COL_BTN_BG);
+    tft.setTextColor(COL_BTN_TEXT, COL_BTN_BG);
+    tft.setCursor(SCREEN_W - 39, barY + (barH - 8) / 2);
+    tft.print("Send");
+
+    // Show KB button (only when KB hidden)
+    if (!kbVisible) {
+        tft.fillRect(SCREEN_W - 110, barY + 2, 58, barH - 4, COL_BTN_BG);
+        tft.setTextColor(COL_BTN_TEXT, COL_BTN_BG);
+        tft.setCursor(SCREEN_W - 107, barY + (barH - 8) / 2);
+        tft.print("Show KB");
+    }
+}
+
 void setup() {
     Serial.begin(115200);
 
@@ -160,6 +199,7 @@ void setup() {
     while (ts.touched() && millis() - t0 < 500) delay(10);
 
     drawKeyboard();
+    drawInputBar();
 }
 
 void loop() {}
