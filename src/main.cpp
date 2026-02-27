@@ -72,14 +72,14 @@ XPT2046_Touchscreen ts(TOUCH_CS_PIN, TOUCH_IRQ);
 void setup() {
     Serial.begin(115200);
 
-    // Backlight
-    pinMode(TFT_BL, OUTPUT);
-    digitalWrite(TFT_BL, HIGH);
-
-    // Display
+    // Display (init before backlight to avoid white flash)
     tft.init();
     tft.setRotation(1);
     tft.fillScreen(COL_BG);
+
+    // Backlight on after screen is ready
+    pinMode(TFT_BL, OUTPUT);
+    digitalWrite(TFT_BL, HIGH);
 
     // Touch
     touchSPI.begin(TOUCH_SCLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS_PIN);
