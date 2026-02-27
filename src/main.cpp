@@ -1,4 +1,5 @@
 // AI Terminal for CYD28 (ESP32-2432S028R)
+// 270226 Memory tuning and final polish
 // 270226 Initial scaffold
 // 270226 Display init, constants, backlight
 // 270226 Keyboard rendering
