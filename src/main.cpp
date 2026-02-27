@@ -465,11 +465,10 @@ String callGemini(const char* prompt) {
     }
 
     client.printf(
-        "POST %s HTTP/1.1\r\n"
+        "POST %s HTTP/1.0\r\n"
         "Host: generativelanguage.googleapis.com\r\n"
         "Content-Type: application/json\r\n"
-        "Content-Length: %d\r\n"
-        "Connection: close\r\n\r\n",
+        "Content-Length: %d\r\n\r\n",
         path, (int)body.length());
     client.print(body);
 
@@ -485,6 +484,8 @@ String callGemini(const char* prompt) {
 
     String respBody = client.readString();
     client.stop();
+
+    if (respBody.length() == 0) return "ERR: empty response";
 
     if (!ok) {
         Serial.println("Gemini error:");
