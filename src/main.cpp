@@ -3,6 +3,7 @@
 // 270226 Display init, constants, backlight
 // 270226 Keyboard rendering
 // 270226 Input bar rendering
+// 270226 Conversation history rendering
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -175,6 +176,94 @@ void drawInputBar() {
         tft.setCursor(SCREEN_W - 107, barY + (barH - 8) / 2);
         tft.print("Show KB");
     }
+}
+
+// --- Conversation history ---
+struct Message {
+    bool   isUser;
+    bool   isError;
+    char   text[512];
+};
+
+static const int  MAX_MESSAGES = 20;
+Message           history[MAX_MESSAGES];
+int               historyCount = 0;
+
+// Rendered line cache
+static const int  MAX_LINES  = 200;
+char              lines[MAX_LINES][54];   // 53 chars + null per line
+uint16_t          lineColor[MAX_LINES];
+int               lineCount    = 0;
+int               scrollOffset = 0;       // lines scrolled up from bottom
+
+void rebuildLines() {
+    lineCount = 0;
+    for (int m = 0; m < historyCount && lineCount < MAX_LINES - 2; m++) {
+        uint16_t col = history[m].isError ? COL_ERROR :
+                       history[m].isUser  ? COL_USER  : COL_AI;
+        const char* prefix = history[m].isUser ? "You: " : "AI:  ";
+        char full[520];
+        snprintf(full, sizeof(full), "%s%s", prefix, history[m].text);
+
+        // Word-wrap at 53 chars
+        int len = strlen(full);
+        int pos = 0;
+        while (pos < len && lineCount < MAX_LINES - 1) {
+            int remaining = len - pos;
+            if (remaining <= 53) {
+                strncpy(lines[lineCount], full + pos, remaining);
+                lines[lineCount][remaining] = '\0';
+                pos = len;
+            } else {
+                // Back up to last space
+                int cut = pos + 53;
+                while (cut > pos && full[cut] != ' ') cut--;
+                if (cut == pos) cut = pos + 53;  // no space found — hard break
+                int count = cut - pos;
+                strncpy(lines[lineCount], full + pos, count);
+                lines[lineCount][count] = '\0';
+                pos = cut + (full[cut] == ' ' ? 1 : 0);
+            }
+            lineColor[lineCount] = col;
+            lineCount++;
+        }
+    }
+}
+
+void drawHistory() {
+    int histH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
+    tft.fillRect(0, 0, SCREEN_W, histH, COL_BG);
+
+    int lineH    = 10;   // 8px font + 2px gap
+    int maxVis   = histH / lineH;
+
+    // scrollOffset=0 means show bottom of history
+    int firstIdx = lineCount - maxVis - scrollOffset;
+    if (firstIdx < 0) firstIdx = 0;
+
+    for (int i = 0; i < maxVis && (firstIdx + i) < lineCount; i++) {
+        int idx = firstIdx + i;
+        tft.setTextColor(lineColor[idx], COL_BG);
+        tft.setTextSize(1);
+        tft.setCursor(0, i * lineH);
+        tft.print(lines[idx]);
+    }
+}
+
+void addMessage(bool isUser, bool isError, const char* text) {
+    if (historyCount >= MAX_MESSAGES) {
+        // Drop oldest two (user+AI pair)
+        memmove(history, history + 2, (MAX_MESSAGES - 2) * sizeof(Message));
+        historyCount -= 2;
+    }
+    history[historyCount].isUser  = isUser;
+    history[historyCount].isError = isError;
+    strncpy(history[historyCount].text, text, 511);
+    history[historyCount].text[511] = '\0';
+    historyCount++;
+    scrollOffset = 0;   // auto-scroll to bottom
+    rebuildLines();
+    drawHistory();
 }
 
 void setup() {
