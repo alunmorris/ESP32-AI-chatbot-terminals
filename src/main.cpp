@@ -7,6 +7,7 @@
 // 270226 Touch handling
 // 270226 WiFi and NTP
 // 270226 Base64url utility
+// 270226 Switch to Gemini API key, add callGemini()
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -15,22 +16,11 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
-#include "mbedtls/pk.h"
-#include "mbedtls/md.h"
-#include "mbedtls/entropy.h"
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/base64.h"
-#include <time.h>
 
-// --- Credentials (fill in before Task 9) ---
+// --- Credentials ---
 const char* WIFI_SSID       = "YOUR_SSID";
 const char* WIFI_PASSWORD   = "YOUR_PASSWORD";
-const char* SA_EMAIL        = "YOUR_SA_EMAIL";
-const char* SA_PRIVATE_KEY  = "-----BEGIN PRIVATE KEY-----\n"
-                               "YOUR_KEY_HERE\n"
-                               "-----END PRIVATE KEY-----\n";
-const char* GCP_PROJECT     = "YOUR_PROJECT_ID";
-const char* GCP_REGION      = "us-central1";
+const char* GEMINI_API_KEY  = "GEMINI_KEY_REMOVED";
 const char* GEMINI_MODEL    = "gemini-2.0-flash";
 
 // --- Hardware pins ---
@@ -411,28 +401,7 @@ void handleTouch() {
     }
 }
 
-// --- Base64url encoding ---
-String base64url(const uint8_t* data, size_t len) {
-    size_t b64Len = ((len + 2) / 3) * 4 + 1;
-    uint8_t* b64 = (uint8_t*)malloc(b64Len);
-    if (!b64) return "";
-    size_t olen = 0;
-    mbedtls_base64_encode(b64, b64Len, &olen, data, len);
-    b64[olen] = '\0';
-    String s = (char*)b64;
-    free(b64);
-    // Make URL-safe
-    s.replace('+', '-');
-    s.replace('/', '_');
-    while (s.endsWith("=")) s.remove(s.length() - 1);
-    return s;
-}
-
-String base64urlStr(const char* str) {
-    return base64url((const uint8_t*)str, strlen(str));
-}
-
-// --- WiFi and NTP ---
+// --- WiFi ---
 void connectWiFi() {
     tft.setTextColor(TFT_WHITE, COL_BG);
     tft.setTextSize(1);
@@ -452,15 +421,86 @@ void connectWiFi() {
     }
 }
 
-void syncTime() {
-    configTime(0, 0, "pool.ntp.org", "time.google.com");
-    // Wait up to 5s for time sync
-    struct tm ti;
-    int attempts = 0;
-    while (!getLocalTime(&ti) && attempts < 10) { delay(500); attempts++; }
-    if (attempts >= 10) {
-        addMessage(false, true, "NTP sync failed — JWT will be invalid");
+// --- Gemini API call ---
+String callGemini(const char* prompt) {
+    // Build JSON body
+    JsonDocument reqDoc;
+    JsonObject sysInstr = reqDoc["system_instruction"].to<JsonObject>();
+    JsonArray  sysParts = sysInstr["parts"].to<JsonArray>();
+    JsonObject sysPart  = sysParts.add<JsonObject>();
+    sysPart["text"]     = "Respond in 150 words or fewer.";
+
+    JsonArray contents = reqDoc["contents"].to<JsonArray>();
+
+    // Add conversation history
+    for (int i = 0; i < historyCount; i++) {
+        JsonObject msg  = contents.add<JsonObject>();
+        msg["role"]     = history[i].isUser ? "user" : "model";
+        JsonArray parts = msg["parts"].to<JsonArray>();
+        JsonObject part = parts.add<JsonObject>();
+        part["text"]    = history[i].text;
     }
+
+    // Add current prompt
+    JsonObject curMsg  = contents.add<JsonObject>();
+    curMsg["role"]     = "user";
+    JsonArray curParts = curMsg["parts"].to<JsonArray>();
+    JsonObject curPart = curParts.add<JsonObject>();
+    curPart["text"]    = prompt;
+
+    String body;
+    serializeJson(reqDoc, body);
+
+    // Build URL path with API key
+    char path[256];
+    snprintf(path, sizeof(path),
+        "/v1beta/models/%s:generateContent?key=%s",
+        GEMINI_MODEL, GEMINI_API_KEY);
+
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    if (!client.connect("generativelanguage.googleapis.com", 443)) {
+        return "ERR: connect failed";
+    }
+
+    client.printf(
+        "POST %s HTTP/1.1\r\n"
+        "Host: generativelanguage.googleapis.com\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: %d\r\n"
+        "Connection: close\r\n\r\n",
+        path, (int)body.length());
+    client.print(body);
+
+    // Read status line
+    String statusLine = client.readStringUntil('\n');
+    bool ok = statusLine.indexOf("200") > 0;
+
+    // Skip headers
+    while (client.connected()) {
+        String line = client.readStringUntil('\n');
+        if (line == "\r") break;
+    }
+
+    String respBody = client.readString();
+    client.stop();
+
+    if (!ok) {
+        Serial.println("Gemini error:");
+        Serial.println(respBody);
+        return "ERR: API returned non-200";
+    }
+
+    JsonDocument respDoc;
+    if (deserializeJson(respDoc, respBody) != DeserializationError::Ok) {
+        return "ERR: JSON parse failed";
+    }
+
+    const char* text = respDoc["candidates"][0]["content"]["parts"][0]["text"];
+    if (!text) return "ERR: no text in response";
+
+    return String(text);
 }
 
 void setup() {
@@ -487,7 +527,6 @@ void setup() {
     drawKeyboard();
     drawInputBar();
     connectWiFi();
-    syncTime();
 }
 
 void loop() {
