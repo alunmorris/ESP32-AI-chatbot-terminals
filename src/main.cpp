@@ -5,6 +5,7 @@
 // 270226 Input bar rendering
 // 270226 Conversation history rendering
 // 270226 Touch handling
+// 270226 Base64url utility
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -407,6 +408,27 @@ void handleTouch() {
             if (scrollOffset > 0) { scrollOffset--; drawHistory(); }
         }
     }
+}
+
+// --- Base64url encoding ---
+String base64url(const uint8_t* data, size_t len) {
+    size_t b64Len = ((len + 2) / 3) * 4 + 1;
+    uint8_t* b64 = (uint8_t*)malloc(b64Len);
+    if (!b64) return "";
+    size_t olen = 0;
+    mbedtls_base64_encode(b64, b64Len, &olen, data, len);
+    b64[olen] = '\0';
+    String s = (char*)b64;
+    free(b64);
+    // Make URL-safe
+    s.replace('+', '-');
+    s.replace('/', '_');
+    while (s.endsWith("=")) s.remove(s.length() - 1);
+    return s;
+}
+
+String base64urlStr(const char* str) {
+    return base64url((const uint8_t*)str, strlen(str));
 }
 
 void setup() {
