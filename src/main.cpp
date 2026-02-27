@@ -8,6 +8,7 @@
 // 270226 WiFi and NTP
 // 270226 Base64url utility
 // 270226 Switch to Gemini API key, add callGemini()
+// 270226 Send flow wired
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -306,6 +307,8 @@ char hitTestKB(int sx, int sy) {
     return '\0';
 }
 
+void sendPrompt();  // forward declaration — defined after callGemini()
+
 void handleTouch() {
     if (!touchReady()) return;
 
@@ -323,11 +326,7 @@ void handleTouch() {
     // --- Send button ---
     if (inRect(sx, sy, SCREEN_W - 46, barY + 2, 44, barH - 4)) {
         if (inputLen > 0) {
-            // placeholder — wired up in Task 12
-            addMessage(true, false, inputBuf);
-            inputBuf[0] = '\0';
-            inputLen    = 0;
-            drawInputBar();
+            sendPrompt();
         }
         return;
     }
@@ -502,6 +501,44 @@ String callGemini(const char* prompt) {
     if (!text) return "ERR: no text in response";
 
     return String(text);
+}
+
+// --- Send flow ---
+void showThinking() {
+    int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
+    int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
+    tft.fillRect(0, barY, SCREEN_W - 46, barH, COL_IBAR_BG);
+    tft.setTextColor(TFT_DARKGREY, COL_IBAR_BG);
+    tft.setTextSize(1);
+    tft.setCursor(2, barY + (barH - 8) / 2);
+    tft.print("Thinking...");
+}
+
+void sendPrompt() {
+    if (inputLen == 0) return;
+
+    char prompt[128];
+    strncpy(prompt, inputBuf, 127);
+    prompt[127] = '\0';
+
+    // Clear input buffer
+    inputBuf[0] = '\0';
+    inputLen    = 0;
+
+    // Show user message and thinking indicator
+    addMessage(true, false, prompt);
+    showThinking();
+
+    // Call API
+    String response = callGemini(prompt);
+
+    if (response.startsWith("ERR:")) {
+        addMessage(false, true, response.c_str());
+    } else {
+        addMessage(false, false, response.c_str());
+    }
+
+    drawInputBar();
 }
 
 void setup() {
