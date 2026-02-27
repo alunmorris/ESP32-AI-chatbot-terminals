@@ -4,6 +4,7 @@
 // 270226 Keyboard rendering
 // 270226 Input bar rendering
 // 270226 Conversation history rendering
+// 270226 Touch handling
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -266,6 +267,147 @@ void addMessage(bool isUser, bool isError, const char* text) {
     drawHistory();
 }
 
+// --- Touch coordinate mapping ---
+// Raw XPT2046 range ~200–3900 → screen pixels
+void mapTouch(TS_Point& tp, int& sx, int& sy) {
+    sx = map(tp.x, 200, 3900, 0, SCREEN_W - 1);
+    sy = map(tp.y, 200, 3900, 0, SCREEN_H - 1);
+}
+
+// --- Debounce ---
+unsigned long lastTouchMs = 0;
+#define TOUCH_DEBOUNCE_MS 250
+
+bool touchReady() {
+    if (!ts.touched()) return false;
+    if (millis() - lastTouchMs < TOUCH_DEBOUNCE_MS) {
+        while (ts.touched()) delay(10);
+        return false;
+    }
+    return true;
+}
+
+// --- Key hit-test helpers ---
+bool inRect(int sx, int sy, int rx, int ry, int rw, int rh) {
+    return sx >= rx && sx < rx + rw && sy >= ry && sy < ry + rh;
+}
+
+// Returns key char if a letter key was hit, '\0' otherwise
+char hitTestKB(int sx, int sy) {
+    // Row 1
+    for (int i = 0; i < 10; i++) {
+        int kx = KB_ROW1_X + i * (KEY_W + KEY_GAP);
+        if (inRect(sx, sy, kx, KB_Y, KEY_W, KEY_H)) return KB_ROW1[i];
+    }
+    // Row 2
+    int row2Y = KB_Y + KEY_H + KEY_GAP;
+    for (int i = 0; i < 9; i++) {
+        int kx = KB_ROW2_X + i * (KEY_W + KEY_GAP);
+        if (inRect(sx, sy, kx, row2Y, KEY_W, KEY_H)) return KB_ROW2[i];
+    }
+    // Row 3
+    int row3Y = KB_Y + 2 * (KEY_H + KEY_GAP);
+    for (int i = 0; i < 7; i++) {
+        int kx = KB_ROW3_X + i * (KEY_W + KEY_GAP);
+        if (inRect(sx, sy, kx, row3Y, KEY_W, KEY_H)) return KB_ROW3[i];
+    }
+    return '\0';
+}
+
+void handleTouch() {
+    if (!touchReady()) return;
+
+    TS_Point tp = ts.getPoint();
+    while (ts.touched()) delay(10);   // wait for release
+    lastTouchMs = millis();
+
+    int sx, sy;
+    mapTouch(tp, sx, sy);
+
+    int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
+    int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
+
+    // --- Send button ---
+    if (inRect(sx, sy, SCREEN_W - 46, barY + 2, 44, barH - 4)) {
+        if (inputLen > 0) {
+            // placeholder — wired up in Task 12
+            addMessage(true, false, inputBuf);
+            inputBuf[0] = '\0';
+            inputLen    = 0;
+            drawInputBar();
+        }
+        return;
+    }
+
+    // --- Show KB button (only when hidden) ---
+    if (!kbVisible && inRect(sx, sy, SCREEN_W - 110, barY + 2, 58, barH - 4)) {
+        kbVisible = true;
+        tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
+        drawHistory();
+        drawInputBar();
+        drawKeyboard();
+        return;
+    }
+
+    // --- Keyboard area ---
+    if (kbVisible && sy >= KB_Y) {
+        int row2Y = KB_Y + KEY_H + KEY_GAP;
+        int row3Y = KB_Y + 2 * (KEY_H + KEY_GAP);
+        int row4Y = KB_Y + 3 * (KEY_H + KEY_GAP);
+
+        // Hide KB button (row 1 right)
+        if (inRect(sx, sy, SCREEN_W - HIDE_W - 1, KB_Y, HIDE_W, KEY_H)) {
+            kbVisible = false;
+            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
+            drawHistory();
+            drawInputBar();
+            return;
+        }
+
+        // Backspace (row 2 right)
+        if (inRect(sx, sy, SCREEN_W - BS_W - 1, row2Y, BS_W, KEY_H)) {
+            if (inputLen > 0) { inputBuf[--inputLen] = '\0'; drawInputBar(); }
+            return;
+        }
+
+        // Space (row 4 left)
+        if (inRect(sx, sy, 2, row4Y, SPACE_W, KEY_H)) {
+            if (inputLen < 127) { inputBuf[inputLen++] = ' '; inputBuf[inputLen] = '\0'; drawInputBar(); }
+            return;
+        }
+
+        // CLR (row 4 right)
+        if (inRect(sx, sy, SCREEN_W - CLR_W - 2, row4Y, CLR_W, KEY_H)) {
+            inputBuf[0] = '\0'; inputLen = 0; drawInputBar();
+            return;
+        }
+
+        // Letter key
+        char c = hitTestKB(sx, sy);
+        if (c && inputLen < 127) {
+            inputBuf[inputLen++] = c;
+            inputBuf[inputLen]   = '\0';
+            drawInputBar();
+        }
+        return;
+    }
+
+    // --- History scroll (left 15px strip) ---
+    int histH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
+    if (sx < 15 && sy < histH) {
+        int mid = histH / 2;
+        if (sy < mid) {
+            // Scroll up (show older)
+            int maxVis    = histH / 10;
+            int maxScroll = lineCount - maxVis;
+            if (maxScroll > 0 && scrollOffset < maxScroll) { scrollOffset++; drawHistory(); }
+        } else {
+            // Scroll down (show newer)
+            if (scrollOffset > 0) { scrollOffset--; drawHistory(); }
+        }
+    }
+}
+
 void setup() {
     Serial.begin(115200);
 
@@ -291,4 +433,6 @@ void setup() {
     drawInputBar();
 }
 
-void loop() {}
+void loop() {
+    handleTouch();
+}
