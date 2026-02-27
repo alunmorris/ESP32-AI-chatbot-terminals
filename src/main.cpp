@@ -79,7 +79,7 @@ const char* KB_ROW3 = "ZXCVBNM";
 
 #define KEY_W       28
 #define KEY_H       24
-#define KEY_GAP      2
+#define KEY_GAP      1
 #define KB_ROW1_X    2
 #define KB_ROW2_X    7
 #define KB_ROW3_X   16
@@ -134,8 +134,8 @@ void drawKeyboard() {
 
     // Row 4: SPACE + CLR
     int row4Y = KB_Y + 3 * (KEY_H + KEY_GAP);
-    drawKey(2,                    row4Y, SPACE_W, KEY_H + 2, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
-    drawKey(SCREEN_W - CLR_W - 2, row4Y, CLR_W,  KEY_H + 2, "CLR",   COL_BTN_BG, COL_BTN_TEXT);
+    drawKey(2,                    row4Y, SPACE_W, KEY_H, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
+    drawKey(SCREEN_W - CLR_W - 2, row4Y, CLR_W,  KEY_H, "CLR",   COL_BTN_BG, COL_BTN_TEXT);
 }
 
 void setup() {
