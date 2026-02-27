@@ -458,6 +458,9 @@ void syncTime() {
     struct tm ti;
     int attempts = 0;
     while (!getLocalTime(&ti) && attempts < 10) { delay(500); attempts++; }
+    if (attempts >= 10) {
+        addMessage(false, true, "NTP sync failed — JWT will be invalid");
+    }
 }
 
 void setup() {
