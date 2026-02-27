@@ -5,6 +5,7 @@
 // 270226 Input bar rendering
 // 270226 Conversation history rendering
 // 270226 Touch handling
+// 270226 WiFi and NTP
 // 270226 Base64url utility
 
 #include <Arduino.h>
@@ -431,6 +432,34 @@ String base64urlStr(const char* str) {
     return base64url((const uint8_t*)str, strlen(str));
 }
 
+// --- WiFi and NTP ---
+void connectWiFi() {
+    tft.setTextColor(TFT_WHITE, COL_BG);
+    tft.setTextSize(1);
+    tft.setCursor(2, 2);
+    tft.print("Connecting WiFi...");
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+        delay(500);
+        attempts++;
+    }
+    tft.fillRect(0, 0, SCREEN_W, 12, COL_BG);
+    if (WiFi.status() != WL_CONNECTED) {
+        addMessage(false, true, "WiFi connect failed");
+    }
+}
+
+void syncTime() {
+    configTime(0, 0, "pool.ntp.org", "time.google.com");
+    // Wait up to 5s for time sync
+    struct tm ti;
+    int attempts = 0;
+    while (!getLocalTime(&ti) && attempts < 10) { delay(500); attempts++; }
+}
+
 void setup() {
     Serial.begin(115200);
 
@@ -454,6 +483,8 @@ void setup() {
 
     drawKeyboard();
     drawInputBar();
+    connectWiFi();
+    syncTime();
 }
 
 void loop() {
