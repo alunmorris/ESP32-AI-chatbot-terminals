@@ -1,6 +1,7 @@
 // AI Terminal for CYD28 (ESP32-2432S028R)
 // 270226 Initial scaffold
 // 270226 Display init, constants, backlight
+// 270226 Keyboard rendering
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -69,6 +70,74 @@ TFT_eSPI tft = TFT_eSPI();
 SPIClass touchSPI(HSPI);
 XPT2046_Touchscreen ts(TOUCH_CS_PIN, TOUCH_IRQ);
 
+// --- Keyboard layout ---
+bool kbVisible = true;
+
+const char* KB_ROW1 = "QWERTYUIOP";
+const char* KB_ROW2 = "ASDFGHJKL";
+const char* KB_ROW3 = "ZXCVBNM";
+
+#define KEY_W       28
+#define KEY_H       24
+#define KEY_GAP      2
+#define KB_ROW1_X    2
+#define KB_ROW2_X    7
+#define KB_ROW3_X   16
+
+// Special key widths
+#define HIDE_W      42   // [Hide KB] / [Show KB]
+#define BS_W        36   // [⌫]
+#define SPACE_W    160
+#define CLR_W       60
+
+void drawKey(int x, int y, int w, int h, const char* label, uint16_t face, uint16_t text) {
+    tft.fillRoundRect(x, y, w, h, 3, face);
+    tft.setTextColor(text, face);
+    tft.setTextSize(1);
+    int tx = x + (w - strlen(label) * 6) / 2;
+    int ty = y + (h - 8) / 2;
+    tft.setCursor(tx, ty);
+    tft.print(label);
+}
+
+void drawKeyboard() {
+    if (!kbVisible) return;
+    tft.fillRect(0, KB_Y, SCREEN_W, KB_H, COL_BG);
+
+    // Row 1: QWERTYUIOP + [Hide]
+    int x = KB_ROW1_X;
+    for (int i = 0; i < 10; i++) {
+        char label[2] = { KB_ROW1[i], 0 };
+        drawKey(x, KB_Y, KEY_W, KEY_H, label, COL_KEY_FACE, COL_KEY_LABEL);
+        x += KEY_W + KEY_GAP;
+    }
+    drawKey(SCREEN_W - HIDE_W - 1, KB_Y, HIDE_W, KEY_H, "Hide", COL_BTN_BG, COL_BTN_TEXT);
+
+    // Row 2: ASDFGHJKL + [⌫]
+    x = KB_ROW2_X;
+    int row2Y = KB_Y + KEY_H + KEY_GAP;
+    for (int i = 0; i < 9; i++) {
+        char label[2] = { KB_ROW2[i], 0 };
+        drawKey(x, row2Y, KEY_W, KEY_H, label, COL_KEY_FACE, COL_KEY_LABEL);
+        x += KEY_W + KEY_GAP;
+    }
+    drawKey(SCREEN_W - BS_W - 1, row2Y, BS_W, KEY_H, "<-", COL_BTN_BG, COL_BTN_TEXT);
+
+    // Row 3: ZXCVBNM
+    x = KB_ROW3_X;
+    int row3Y = KB_Y + 2 * (KEY_H + KEY_GAP);
+    for (int i = 0; i < 7; i++) {
+        char label[2] = { KB_ROW3[i], 0 };
+        drawKey(x, row3Y, KEY_W, KEY_H, label, COL_KEY_FACE, COL_KEY_LABEL);
+        x += KEY_W + KEY_GAP;
+    }
+
+    // Row 4: SPACE + CLR
+    int row4Y = KB_Y + 3 * (KEY_H + KEY_GAP);
+    drawKey(2,                    row4Y, SPACE_W, KEY_H + 2, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
+    drawKey(SCREEN_W - CLR_W - 2, row4Y, CLR_W,  KEY_H + 2, "CLR",   COL_BTN_BG, COL_BTN_TEXT);
+}
+
 void setup() {
     Serial.begin(115200);
 
@@ -89,6 +158,8 @@ void setup() {
     // Drain spurious startup touch
     unsigned long t0 = millis();
     while (ts.touched() && millis() - t0 < 500) delay(10);
+
+    drawKeyboard();
 }
 
 void loop() {}
