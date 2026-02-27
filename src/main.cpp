@@ -323,6 +323,7 @@ void handleTouch() {
 
     int sx, sy;
     mapTouch(tp, sx, sy);
+    if (sx < 0 || sy < 0 || sx >= SCREEN_W || sy >= SCREEN_H) return;
 
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
