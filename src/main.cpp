@@ -19,6 +19,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
+// FreeSansBold9pt7b (FF25/FSSB9) is already included by TFT_eSPI via gfxfont.h when LOAD_GFXFF is set
 #include <XPT2046_Touchscreen.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -127,9 +128,9 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define KEY_RADIUS        3     // rounded corner radius for keys
 
 // --- Layout metrics ---
-#define LINE_H_LARGE     18     // Font 2 line height (16px + 2px gap)
+#define LINE_H_LARGE     16     // FreeSansBold9pt7b line height (yAdvance=16)
 #define LINE_H_SMALL     10     // GLCD line height (8px + 2px gap)
-#define SPLASH_H         54     // height of boot splash area to clear after connect
+#define SPLASH_H         48     // height of boot splash area to clear after connect (3 × LINE_H_LARGE)
 
 // --- Input bar ---
 #define INPUT_BUF_SIZE  128     // input text buffer including null terminator
