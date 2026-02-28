@@ -234,7 +234,7 @@ void drawKeyboard() {
     drawKey(ALT_X,   row4Y, ALT_W,   KEY_H, altOn   ? "ALT" : "alt", altFace,   COL_BTN_TEXT);
     drawKey(SPACE_X, row4Y, SPACE_W, KEY_H, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
     drawKey(HIDE_X,  row4Y, HIDE_W,  KEY_H, "Hide",  COL_BTN_BG, COL_BTN_TEXT);
-    drawKey(BS_X,    row4Y, BS_W,    KEY_H, "<",     COL_BTN_BG, COL_BTN_TEXT);
+    drawKey(BS_X,    row4Y, BS_W,    KEY_H, "<-",    COL_BTN_BG, COL_BTN_TEXT);
 }
 
 // --- WiFi health ---
@@ -698,10 +698,14 @@ void handleTouch() {
                 drawHistory();
                 drawInputBar();
             } else if (inRect(sx, sy, BS_X, row4Y, BS_W, KEY_H)) {
-                drawKey(BS_X, row4Y, BS_W, KEY_H, "<", TFT_WHITE, COL_BTN_TEXT);
+                drawKey(BS_X, row4Y, BS_W, KEY_H, "<-", TFT_WHITE, COL_BTN_TEXT);
                 delay(KEY_FLASH_MS);
-                drawKey(BS_X, row4Y, BS_W, KEY_H, "<", COL_BTN_BG, COL_BTN_TEXT);
-                if (inputLen > 0) { inputBuf[--inputLen] = '\0'; if (inputLen == 0 && historyCount > 0) moreMode = true; drawInputBar(); }
+                drawKey(BS_X, row4Y, BS_W, KEY_H, "<-", COL_BTN_BG, COL_BTN_TEXT);
+                if (inputLen > 0) {
+                    inputBuf[--inputLen] = '\0';
+                    if (inputLen == 0 && historyCount > 0) moreMode = true;
+                    drawInputBar();
+                }
             }
             return;
         }
