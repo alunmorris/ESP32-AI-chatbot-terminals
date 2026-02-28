@@ -225,15 +225,15 @@ void drawKeyboard() {
     drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "]" : (shiftOn ? ">" : "."), COL_KEY_FACE, COL_KEY_LABEL); x += KEY_W;
     drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "\\" : (shiftOn ? "?" : "/"), COL_KEY_FACE, COL_KEY_LABEL);
 
-    // Row 4: [Shift] [Alt] [Space] [Hide] [BS]
-    int row4Y = KB_Y + 4 * rowStep;
+    // Row 4: [Shift] [Alt] [Space] [Hide] [BS] — 1px lower, 1px shorter (extra gap above)
+    int row4Y = KB_Y + 4 * rowStep + 1;
     uint16_t shiftFace = shiftOn ? TFT_NAVY : COL_BTN_BG;
     uint16_t altFace   = altOn   ? TFT_NAVY : COL_BTN_BG;
-    drawKey(SHIFT_X, row4Y, SHIFT_W, KEY_H, shiftOn ? "SHF" : "shf", shiftFace, COL_BTN_TEXT);
-    drawKey(ALT_X,   row4Y, ALT_W,   KEY_H, altOn   ? "ALT" : "alt", altFace,   COL_BTN_TEXT);
-    drawKey(SPACE_X, row4Y, SPACE_W, KEY_H, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
-    drawKey(HIDE_X,  row4Y, HIDE_W,  KEY_H, "Hide",  COL_BTN_BG, COL_BTN_TEXT);
-    drawKey(BS_X,    row4Y, BS_W,    KEY_H, "<-",    COL_BTN_BG, COL_BTN_TEXT);
+    drawKey(SHIFT_X, row4Y, SHIFT_W, KEY_H - 1, shiftOn ? "SHF" : "shf", shiftFace, COL_BTN_TEXT);
+    drawKey(ALT_X,   row4Y, ALT_W,   KEY_H - 1, altOn   ? "ALT" : "alt", altFace,   COL_BTN_TEXT);
+    drawKey(SPACE_X, row4Y, SPACE_W, KEY_H - 1, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
+    drawKey(HIDE_X,  row4Y, HIDE_W,  KEY_H - 1, "Hide",  COL_BTN_BG, COL_BTN_TEXT);
+    drawKey(BS_X,    row4Y, BS_W,    KEY_H - 1, "<-",    COL_BTN_BG, COL_BTN_TEXT);
 }
 
 // --- WiFi health ---
@@ -660,32 +660,32 @@ void handleTouch() {
     // --- Keyboard area ---
     if (kbVisible && sy >= KB_Y) {
         int rowStep = KEY_H + KEY_GAP;
-        int row4Y   = KB_Y + 4 * rowStep;
+        int row4Y   = KB_Y + 4 * rowStep + 1;
 
         // Row 4 special keys
-        if (sy >= row4Y && sy < row4Y + KEY_H) {
-            if (inRect(sx, sy, SHIFT_X, row4Y, SHIFT_W, KEY_H)) {
+        if (sy >= row4Y && sy < row4Y + KEY_H - 1) {
+            if (inRect(sx, sy, SHIFT_X, row4Y, SHIFT_W, KEY_H - 1)) {
                 shiftOn = !shiftOn;
                 if (shiftOn) altOn = false;
                 drawKeyboard();
-            } else if (inRect(sx, sy, ALT_X, row4Y, ALT_W, KEY_H)) {
+            } else if (inRect(sx, sy, ALT_X, row4Y, ALT_W, KEY_H - 1)) {
                 altOn = !altOn;
                 if (altOn) shiftOn = false;
                 drawKeyboard();
-            } else if (inRect(sx, sy, SPACE_X, row4Y, SPACE_W, KEY_H)) {
-                drawKey(SPACE_X, row4Y, SPACE_W, KEY_H, "SPACE", TFT_WHITE, COL_BG);
+            } else if (inRect(sx, sy, SPACE_X, row4Y, SPACE_W, KEY_H - 1)) {
+                drawKey(SPACE_X, row4Y, SPACE_W, KEY_H - 1, "SPACE", TFT_WHITE, COL_BG);
                 delay(KEY_FLASH_MS);
-                drawKey(SPACE_X, row4Y, SPACE_W, KEY_H, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
+                drawKey(SPACE_X, row4Y, SPACE_W, KEY_H - 1, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
                 if (inputLen < INPUT_MAX_LEN) { moreMode = false; inputBuf[inputLen++] = ' '; inputBuf[inputLen] = '\0'; drawInputBar(); }
-            } else if (inRect(sx, sy, HIDE_X, row4Y, HIDE_W, KEY_H)) {
+            } else if (inRect(sx, sy, HIDE_X, row4Y, HIDE_W, KEY_H - 1)) {
                 kbVisible = false;
                 tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
                 drawHistory();
                 drawInputBar();
-            } else if (inRect(sx, sy, BS_X, row4Y, BS_W, KEY_H)) {
-                drawKey(BS_X, row4Y, BS_W, KEY_H, "<-", TFT_WHITE, COL_BTN_TEXT);
+            } else if (inRect(sx, sy, BS_X, row4Y, BS_W, KEY_H - 1)) {
+                drawKey(BS_X, row4Y, BS_W, KEY_H - 1, "<-", TFT_WHITE, COL_BTN_TEXT);
                 delay(KEY_FLASH_MS);
-                drawKey(BS_X, row4Y, BS_W, KEY_H, "<-", COL_BTN_BG, COL_BTN_TEXT);
+                drawKey(BS_X, row4Y, BS_W, KEY_H - 1, "<-", COL_BTN_BG, COL_BTN_TEXT);
                 if (inputLen > 0) {
                     inputBuf[--inputLen] = '\0';
                     if (inputLen == 0 && historyCount > 0) moreMode = true;
@@ -848,8 +848,8 @@ void pollKBHide() {
     if (sx < 0 || sy < 0 || sx >= SCREEN_W || sy >= SCREEN_H) return;
 
     if (kbVisible) {
-        int row4Y = KB_Y + 4 * (KEY_H + KEY_GAP);
-        if (inRect(sx, sy, HIDE_X, row4Y, HIDE_W, KEY_H)) {
+        int row4Y = KB_Y + 4 * (KEY_H + KEY_GAP) + 1;
+        if (inRect(sx, sy, HIDE_X, row4Y, HIDE_W, KEY_H - 1)) {
             kbVisible = false;
             tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
             drawHistory();
