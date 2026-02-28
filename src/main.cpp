@@ -1,4 +1,6 @@
-// AI Terminal for CYD28 (ESP32-2432S028R)
+// CYD AI chatbot for CYD28 (ESP32-2432S028R)
+// 280226 Add Grok API (xAI), key 4 at boot; route callGemini/callGrok via useGrok flag
+// 280226 RGB LED WiFi signal strength: blue=strong, cyan, green, orange, red=lost
 // 270226 Fix large-font truncation: grow Message.text→2048, full→2060, buffers; setTextWrap(false)
 // 270226 WiFi health ping, red > on fail, reconnect; global endpoint for Flash
 // 270226 Alt key: number row + ,./ alt layer, mutual exclusion with shift
@@ -27,9 +29,13 @@
 const char* WIFI_SSID       = "PlusnetWireless_EXT";
 const char* WIFI_PASSWORD   = "WPAkeykey";
 const char* GEMINI_API_KEY  = "GEMINI_KEY_REMOVED";
+const char* GROK_API_KEY    = "GROK_KEY_REMOVED";
 char        GEMINI_MODEL[48]  = "gemini-3.1-pro-preview"; // overwritten at boot
 bool        geminiUseGlobal   = false;  // true → /locations/global/ in path
+bool        useGrok           = false;  // true → route to Grok API instead of Gemini
 bool        largeFont         = false;  // true → Font 2 (16px) in history area
+bool        invertDisplay     = false;  // true → light grey bg, black text in history area
+#define COL_INVERT_BG   0xC618          // light grey (~RGB 192,192,192)
 
 // --- Hardware pins ---
 #define TFT_BL          21
@@ -38,6 +44,14 @@ bool        largeFont         = false;  // true → Font 2 (16px) in history are
 #define TOUCH_MOSI      32
 #define TOUCH_CS_PIN    33
 #define TOUCH_IRQ       36
+
+// --- RGB LED (active LOW, common anode to 3.3V) ---
+#define LED_R_PIN       4
+#define LED_G_PIN      16
+#define LED_B_PIN      17
+#define LED_R_CH        0   // LEDC channels
+#define LED_G_CH        1
+#define LED_B_CH        2
 
 // --- Screen dimensions ---
 #define SCREEN_W        320
@@ -211,9 +225,9 @@ void drawInputBar() {
     strncpy(display, inputBuf + start, maxChars);
     tft.print(display);
 
-    // Send / More button
+    // Send / More button — text red when WiFi unhealthy
     tft.fillRect(SCREEN_W - 46, barY + 2, 44, barH - 4, COL_BTN_BG);
-    tft.setTextColor(COL_BTN_TEXT, COL_BTN_BG);
+    tft.setTextColor(wifiHealthy ? COL_BTN_TEXT : TFT_RED, COL_BTN_BG);
     tft.setCursor(SCREEN_W - 39, barY + (barH - 8) / 2);
     tft.print(moreMode ? "More" : "Send");
 
@@ -252,10 +266,11 @@ void rebuildLines() {
         const char* prefix = history[m].isUser ? "You: " : "AI:  ";
         char full[2060];
         snprintf(full, sizeof(full), "%s%s", prefix, history[m].text);
-        // Strip control chars except \n (keep newlines as forced line breaks)
-        // \r becomes space — harmless when adjacent to \n
+        // Strip control chars and high bytes (text already sanitised in addMessage,
+        // but prefix chars from prefix string are always clean ASCII).
         for (int j = 0; full[j]; j++) {
-            if ((unsigned char)full[j] < 32 && full[j] != '\n') full[j] = ' ';
+            unsigned char fc = (unsigned char)full[j];
+            if ((fc < 32 && full[j] != '\n') || fc > 126) full[j] = ' ';
         }
 
         if (largeFont) {
@@ -349,7 +364,8 @@ void rebuildLines() {
 
 void drawHistory() {
     int histH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
-    tft.fillRect(0, 0, SCREEN_W, histH, COL_BG);
+    uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+    tft.fillRect(0, 0, SCREEN_W, histH, bg);
 
     int lineH  = largeFont ? 18 : 10;   // Font2: 16px+2gap  GLCD: 8px+2gap
     int maxVis = histH / lineH;
@@ -362,7 +378,9 @@ void drawHistory() {
     tft.setTextWrap(false);  // prevent overflow wrapping onto adjacent lines
     for (int i = 0; i < maxVis && (firstIdx + i) < lineCount; i++) {
         int idx = firstIdx + i;
-        tft.setTextColor(lineColor[idx], COL_BG);
+        uint16_t col = lineColor[idx];
+        if (invertDisplay) col = TFT_BLACK;
+        tft.setTextColor(col, bg);
         tft.setCursor(0, i * lineH);
         tft.print(lines[idx]);
     }
@@ -380,6 +398,58 @@ void addMessage(bool isUser, bool isError, const char* text) {
     history[historyCount].isError = isError;
     strncpy(history[historyCount].text, text, 2047);
     history[historyCount].text[2047] = '\0';
+    // Sanitise to printable ASCII (32-126). Multi-char replacements use a temp
+    // buffer because some strings ("Sterling") are longer than their UTF-8 source.
+    {
+        const char* s = history[historyCount].text;
+        char tmp[2060];
+        char* d   = tmp;
+        char* end = tmp + sizeof(tmp) - 10; // longest replacement is "Sterling"+null
+        while (*s && d < end) {
+            unsigned char c = (unsigned char)*s;
+            if (c < 0x80) {
+                *d++ = (char)c;
+                s++;
+                continue;
+            }
+            // Identify replacement string for common UTF-8 sequences
+            const char* rep = "?";
+            unsigned char b2 = (unsigned char)s[1];
+            unsigned char b3 = (unsigned char)s[2];
+            if (c == 0xC2) {
+                // 2-byte U+00xx
+                if      (b2 == 0xB0) rep = "deg";      // °
+                else if (b2 == 0xA9) rep = "(C)";      // ©
+                else if (b2 == 0xAE) rep = "(R)";      // ®
+                else if (b2 == 0xA3) rep = "Sterling";  // £
+                else if (b2 == 0xA5) rep = "Yen";      // ¥
+                else if (b2 == 0xB5) rep = "mu";       // µ
+                else if (b2 == 0xB1) rep = "+/-";      // ±
+            } else if (c == 0xC3) {
+                if (b2 == 0xB7)      rep = "/";        // ÷
+            } else if (c == 0xCE) {
+                if (b2 == 0xA9)      rep = "omega";    // Ω
+            } else if (c == 0xCF) {
+                if (b2 == 0x80)      rep = "pi";       // π
+            } else if (c == 0xE2) {
+                if (b2 == 0x80) {
+                    if      (b3 == 0x98 || b3 == 0x99) rep = "'";   // curly single quotes
+                    else if (b3 == 0x9C || b3 == 0x9D) rep = "\"";  // curly double quotes
+                    else if (b3 == 0x93 || b3 == 0x94) rep = "-";   // en/em dash
+                    else if (b3 == 0xA6)                rep = "..."; // ellipsis
+                    else if (b3 == 0xA2)                rep = "-";   // bullet
+                } else if (b2 == 0x82 && b3 == 0xAC)   rep = "Euro"; // €
+            }
+            // Consume UTF-8 sequence (lead + continuation bytes)
+            s++;
+            while ((*s & 0xC0) == 0x80) s++;
+            // Write replacement string
+            while (*rep) *d++ = *rep++;
+        }
+        *d = '\0';
+        strncpy(history[historyCount].text, tmp, 2047);
+        history[historyCount].text[2047] = '\0';
+    }
     historyCount++;
     scrollOffset = 0;   // auto-scroll to bottom
     rebuildLines();
@@ -395,7 +465,7 @@ void mapTouch(TS_Point& tp, int& sx, int& sy) {
 
 // --- Debounce ---
 unsigned long lastTouchMs = 0;
-#define TOUCH_DEBOUNCE_MS 250
+#define TOUCH_DEBOUNCE_MS 125
 #define SWIPE_THRESHOLD    15   // screen px of drag to register a scroll step
 
 // --- Key hit-test helpers ---
@@ -614,14 +684,54 @@ void handleTouch() {
 
 }
 
+// --- RGB LED ---
+void setRGBLed(uint8_t r, uint8_t g, uint8_t b) {
+    // Active LOW: invert each channel
+    ledcWrite(LED_R_CH, 255 - r);
+    ledcWrite(LED_G_CH, 255 - g);
+    ledcWrite(LED_B_CH, 255 - b);
+}
+
+void setupRGBLed() {
+    ledcSetup(LED_R_CH, 5000, 8);
+    ledcSetup(LED_G_CH, 5000, 8);
+    ledcSetup(LED_B_CH, 5000, 8);
+    ledcAttachPin(LED_R_PIN, LED_R_CH);
+    ledcAttachPin(LED_G_PIN, LED_G_CH);
+    ledcAttachPin(LED_B_PIN, LED_B_CH);
+    setRGBLed(0, 0, 0);  // off at start
+}
+
+// Set LED colour based on WiFi RSSI (called after every health check)
+// Blue ≥-55  Cyan ≥-65  Green ≥-75  Orange=weak-but-connected  Red=lost
+void updateLedWifi() {
+    if (WiFi.status() != WL_CONNECTED) {
+        setRGBLed(255, 0, 0);   // Red: WiFi lost
+        return;
+    }
+    int rssi = WiFi.RSSI();
+    if      (rssi >= -55) setRGBLed(  0,   0, 255);  // Blue:   strongest
+    else if (rssi >= -65) setRGBLed(  0, 255, 255);  // Cyan:   good
+    else if (rssi >= -75) setRGBLed(  0, 255,   0);  // Green:  fair
+    else                  setRGBLed(255, 128,   0);  // Orange: weak
+}
+
 // --- WiFi ---
-void connectWiFi() {
-    tft.setTextColor(TFT_WHITE, COL_BG);
-    tft.setTextSize(1);
-    tft.setCursor(2, 2);
-    char wifiMsg[54];
-    snprintf(wifiMsg, sizeof(wifiMsg), "Connecting: %.40s...", WIFI_SSID);
-    tft.print(wifiMsg);
+void connectWiFi(bool showSplash = false) {
+    if (showSplash) {
+        tft.setTextFont(2);
+        tft.setTextColor(TFT_YELLOW, COL_BG);
+        tft.setCursor(0, 0);
+        tft.print("CYD AI chatbot v: -0.1.");
+        tft.setCursor(0, 18);
+        tft.print("It's cheap for a reason.");
+        tft.setTextColor(TFT_BLUE, COL_BG);
+        tft.setCursor(0, 36);
+        char wifiMsg[80];
+        snprintf(wifiMsg, sizeof(wifiMsg), "Connecting: %.55s...", WIFI_SSID);
+        tft.print(wifiMsg);
+        tft.setTextFont(1);
+    }
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -630,10 +740,11 @@ void connectWiFi() {
         delay(500);
         attempts++;
     }
-    tft.fillRect(0, 0, SCREEN_W, 12, COL_BG);
+    if (showSplash) tft.fillRect(0, 0, SCREEN_W, 54, COL_BG);
     if (WiFi.status() != WL_CONNECTED) {
         addMessage(false, true, "WiFi connect failed");
     }
+    updateLedWifi();
 }
 
 // --- Waiting messages (shown after 4s, rotate every 4s) ---
@@ -739,7 +850,7 @@ String callGemini(const char* prompt) {
     JsonObject sysInstr = reqDoc["system_instruction"].to<JsonObject>();
     JsonArray  sysParts = sysInstr["parts"].to<JsonArray>();
     JsonObject sysPart  = sysParts.add<JsonObject>();
-    sysPart["text"]     = "Respond in 150 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols.";
+    sysPart["text"]     = "Respond in 150 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols. Never include URLs or hyperlinks. When quoting current or time-sensitive information, use your search tool to check live sources first.";
 
     JsonArray contents = reqDoc["contents"].to<JsonArray>();
 
@@ -759,6 +870,10 @@ String callGemini(const char* prompt) {
     JsonArray curParts = curMsg["parts"].to<JsonArray>();
     JsonObject curPart = curParts.add<JsonObject>();
     curPart["text"]    = prompt;
+
+    // Enable Google Search grounding so the model can retrieve live web results
+    JsonArray tools = reqDoc["tools"].to<JsonArray>();
+    tools.add<JsonObject>()["google_search"].to<JsonObject>();
 
     String body;
     serializeJson(reqDoc, body);
@@ -840,6 +955,158 @@ String callGemini(const char* prompt) {
     return String(text);
 }
 
+// --- Grok API call (xAI /v1/responses + web_search tool) ---
+String callGrok(const char* prompt) {
+    // /v1/responses uses "input" array and top-level "instructions" for system prompt
+    JsonDocument reqDoc;
+    reqDoc["model"]        = "grok-4-1-fast-reasoning";
+    reqDoc["stream"]       = false;
+    reqDoc["instructions"] = "Respond in 150 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind. Do not mention where information came from. When quoting current or time-sensitive information, use your web search tool to check live sources first.";
+
+    JsonArray input = reqDoc["input"].to<JsonArray>();
+
+    // Conversation history (exclude last entry — that is the current prompt)
+    for (int i = 0; i < historyCount - 1; i++) {
+        JsonObject msg  = input.add<JsonObject>();
+        msg["role"]     = history[i].isUser ? "user" : "assistant";
+        msg["content"]  = history[i].text;
+    }
+
+    // Current prompt
+    JsonObject curMsg  = input.add<JsonObject>();
+    curMsg["role"]     = "user";
+    curMsg["content"]  = prompt;
+
+    // Enable live web search
+    JsonArray tools = reqDoc["tools"].to<JsonArray>();
+    tools.add<JsonObject>()["type"] = "web_search";
+
+    String body;
+    serializeJson(reqDoc, body);
+
+    if (WiFi.status() != WL_CONNECTED) {
+        connectWiFi();
+        if (WiFi.status() != WL_CONNECTED) return "ERR: WiFi not connected";
+    }
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setTimeout(45);
+
+    if (!client.connect("eu-west-1.api.x.ai", 443)) {
+        return "ERR: connect failed (check WiFi/DNS)";
+    }
+
+    client.printf(
+        "POST /v1/responses HTTP/1.0\r\n"
+        "Host: eu-west-1.api.x.ai\r\n"
+        "Content-Type: application/json\r\n"
+        "Authorization: Bearer %s\r\n"
+        "Content-Length: %d\r\n\r\n",
+        GROK_API_KEY, (int)body.length());
+    client.print(body);
+
+    String fullResp = "";
+    unsigned long deadline  = millis() + 45000;
+    unsigned long nextMsgMs = millis() + 4000;
+    while (millis() < deadline) {
+        while (client.available()) {
+            fullResp += (char)client.read();
+        }
+        if (!client.connected() && !client.available()) break;
+        if (millis() >= nextMsgMs) {
+            showWaiting(WAIT_MSGS[waitMsgIdx]);
+            waitMsgIdx = (waitMsgIdx + 1) % NUM_WAIT_MSGS;
+            nextMsgMs += 6000;
+        }
+        pollKBHide();
+        delay(10);
+    }
+    client.stop();
+    Serial.printf("[Grok] response len=%d\n", fullResp.length());
+
+    if (fullResp.length() == 0) return "ERR: empty response";
+
+    // Parse HTTP status
+    int httpStatus = 200;
+    if (fullResp.startsWith("HTTP/")) {
+        int sp = fullResp.indexOf(' ');
+        if (sp > 0) httpStatus = fullResp.substring(sp + 1, sp + 4).toInt();
+    }
+
+    int jsonStart = fullResp.indexOf('{');
+    if (jsonStart < 0) return "ERR: no JSON in response";
+    String respBody = fullResp.substring(jsonStart);
+    Serial.println("[Grok] JSON body: " + respBody.substring(0, 400));
+
+    if (httpStatus != 200) {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "ERR: HTTP %d (see serial)", httpStatus);
+        return String(buf);
+    }
+
+    JsonDocument respDoc;
+    if (deserializeJson(respDoc, respBody) != DeserializationError::Ok) {
+        Serial.println("Bad JSON: " + respBody.substring(0, 200));
+        return "ERR: JSON parse failed";
+    }
+
+    const char* errMsg = respDoc["error"]["message"];
+    if (errMsg) {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "ERR: %.72s", errMsg);
+        return String(buf);
+    }
+
+    // /v1/responses: output[] → find type=="message" → content[0]["text"]
+    JsonArray output = respDoc["output"].as<JsonArray>();
+    for (JsonObject item : output) {
+        const char* type = item["type"];
+        if (type && strcmp(type, "message") == 0) {
+            const char* text = item["content"][0]["text"];
+            if (text) {
+                // Strip Grok citations. Format is [[3]](url) (markdown link
+                // where link text is [3]). Also handles bare [3] fallback.
+                String out;
+                out.reserve(strlen(text));
+                const char* p = text;
+                while (*p) {
+                    if (*p == '[') {
+                        // Try [[n]](url) — full Grok markdown citation
+                        if (*(p+1) == '[') {
+                            const char* q = p + 2;
+                            while (*q && *q != ']') q++;
+                            if (*q == ']' && *(q+1) == ']' && *(q+2) == '(') {
+                                bool ok = (q > p + 2);
+                                for (const char* c = p+2; ok && c < q; c++)
+                                    if (*c != ',' && (*c < '0' || *c > '9')) ok = false;
+                                if (ok) {
+                                    const char* r = q + 3; // skip past ]](
+                                    while (*r && *r != ')') r++;
+                                    if (*r == ')') { p = r + 1; continue; }
+                                }
+                            }
+                        }
+                        // Try bare [n] citation marker
+                        const char* q = p + 1;
+                        while (*q && *q != ']') q++;
+                        if (*q == ']') {
+                            bool ok = (q > p + 1);
+                            for (const char* c = p+1; ok && c < q; c++)
+                                if (*c != ',' && (*c < '0' || *c > '9')) ok = false;
+                            if (ok) { p = q + 1; continue; }
+                        }
+                    }
+                    out += *p++;
+                }
+                return out;
+            }
+        }
+    }
+
+    return "ERR: no text in response";
+}
+
 // --- Send flow ---
 void showThinking() {
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
@@ -869,7 +1136,7 @@ void sendPrompt() {
     showThinking();
 
     // Call API
-    String response = callGemini(prompt);
+    String response = useGrok ? callGrok(prompt) : callGemini(prompt);
 
     if (response.startsWith("ERR:")) {
         addMessage(false, true, response.c_str());
@@ -882,19 +1149,19 @@ void sendPrompt() {
 }
 
 void showModelChoices() {
+    tft.setTextSize(1);
     tft.setTextColor(TFT_WHITE, COL_BG);
-    if (largeFont) {
-        tft.setTextFont(2);
-        tft.setCursor(0, 36); tft.print("1  Gemini 2.5 Flash");
-        tft.setCursor(0, 54); tft.print("2  Gemini 3 Flash");
-        tft.setCursor(0, 72); tft.print("3  Gemini 3 Pro");
-        tft.setTextFont(1);
-    } else {
-        tft.setTextSize(1);
-        tft.setCursor(0, 30); tft.print("Hit 1 for Gemini 2.5 Flash");
-        tft.setCursor(0, 40); tft.print("    2 for Gemini 3 Flash");
-        tft.setCursor(0, 50); tft.print("    3 for Gemini 3 Pro");
-        tft.setCursor(0, 60); tft.print("    9 for large text");
+    tft.setCursor(0, 30); tft.print("Hit 1 for Gemini 2.5 Flash");
+    tft.setCursor(0, 40); tft.print("    2 for Gemini 3 Flash");
+    tft.setCursor(0, 50); tft.print("    3 for Gemini 3 Pro");
+    tft.setCursor(0, 60); tft.print("    4 for Grok 4.1 Fast Reasoning");
+    int nextY = 70;
+    if (!largeFont) {
+        tft.setCursor(0, nextY); tft.print("    b for bigger font");
+        nextY += 10;
+    }
+    if (!invertDisplay) {
+        tft.setCursor(0, nextY); tft.print("    i  to invert colours");
     }
 }
 
@@ -915,7 +1182,7 @@ void selectModel() {
         int sx, sy;
         mapTouch(pt, sx, sy);
 
-        // Hit-test keys 1, 2, 3 (first three of number row)
+        // Hit-test keys 1, 2, 3 (Gemini models)
         int x = KB_ROW3_X;
         for (int i = 0; i < 3; i++, x += KEY_W + KEY_GAP) {
             if (inRect(sx, sy, x, KB_Y, KEY_W, KEY_H)) {
@@ -926,43 +1193,101 @@ void selectModel() {
                 strncpy(GEMINI_MODEL, modelIds[i], 47);
                 GEMINI_MODEL[47] = '\0';
                 geminiUseGlobal  = modelGlobal[i];
-                // Confirm selection on screen
-                tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
+                useGrok          = false;
+                uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+                tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
                 if (largeFont) {
                     tft.setTextFont(2);
-                    tft.setTextColor(TFT_GREEN, COL_BG);
-                    tft.setCursor(0,  0); tft.print("AI Terminal");
+                    tft.setTextColor(TFT_GREEN, bg);
+                    tft.setCursor(0,  0); tft.print("CYD AI chatbot");
                     tft.setCursor(0, 18); tft.print(GEMINI_MODEL);
-                    tft.setTextColor(TFT_DARKGREY, COL_BG);
+                    tft.setTextColor(TFT_DARKGREY, bg);
                     tft.setCursor(0, 36); tft.print("Ready.");
                     tft.setTextFont(1);
                 } else {
                     tft.setTextSize(1);
-                    tft.setTextColor(TFT_GREEN, COL_BG);
-                    tft.setCursor(0,  0); tft.print("AI Terminal. Swipe down for older chat.");
+                    tft.setTextColor(TFT_GREEN, bg);
+                    tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
                     tft.setCursor(0, 10); tft.print("Model: "); tft.print(GEMINI_MODEL);
-                    tft.setTextColor(TFT_DARKGREY, COL_BG);
+                    tft.setTextColor(TFT_DARKGREY, bg);
                     tft.setCursor(0, 20); tft.print("Ready.");
                 }
                 return;
             }
         }
 
-        // Key 9 (index 8 in number row) — toggle large text, re-show choices
+        // Key 4 — Grok 4.1 Fast
+        int x4 = KB_ROW3_X + 3 * (KEY_W + KEY_GAP);
+        if (inRect(sx, sy, x4, KB_Y, KEY_W, KEY_H)) {
+            drawKey(x4, KB_Y, KEY_W, KEY_H, "4", TFT_WHITE, COL_BG);
+            delay(100);
+            drawKey(x4, KB_Y, KEY_W, KEY_H, "4", COL_KEY_FACE, COL_KEY_LABEL);
+            useGrok = true;
+            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+            tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
+            if (largeFont) {
+                tft.setTextFont(2);
+                tft.setTextColor(TFT_GREEN, bg);
+                tft.setCursor(0,  0); tft.print("CYD AI chatbot");
+                tft.setCursor(0, 18); tft.print("Grok 4.1 Fast");
+                tft.setTextColor(TFT_DARKGREY, bg);
+                tft.setCursor(0, 36); tft.print("Ready.");
+                tft.setTextFont(1);
+            } else {
+                tft.setTextSize(1);
+                tft.setTextColor(TFT_GREEN, bg);
+                tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
+                tft.setCursor(0, 10); tft.print("Model: Grok 4.1 Fast");
+                tft.setTextColor(TFT_DARKGREY, bg);
+                tft.setCursor(0, 20); tft.print("Ready.");
+            }
+            return;
+        }
+
+        // Key B (ZXCVBNM row, index 4) — toggle large text, re-show choices
         if (!largeFont) {
-            int x9 = KB_ROW3_X + 8 * (KEY_W + KEY_GAP);
-            if (inRect(sx, sy, x9, KB_Y, KEY_W, KEY_H)) {
-                drawKey(x9, KB_Y, KEY_W, KEY_H, "9", TFT_WHITE, COL_BG);
+            int rowStep = KEY_H + KEY_GAP;
+            int row3Y   = KB_Y + 3 * rowStep;
+            int xb      = KB_ROW3_X + 4 * (KEY_W + KEY_GAP);
+            if (inRect(sx, sy, xb, row3Y, KEY_W, KEY_H)) {
+                drawKey(xb, row3Y, KEY_W, KEY_H, "B", TFT_WHITE, COL_BG);
                 delay(100);
-                drawKey(x9, KB_Y, KEY_W, KEY_H, "9", COL_KEY_FACE, COL_KEY_LABEL);
+                drawKey(xb, row3Y, KEY_W, KEY_H, "b", COL_KEY_FACE, COL_KEY_LABEL);
                 largeFont = true;
                 tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
                 tft.setTextFont(2);
                 tft.setTextColor(TFT_DARKGREY, COL_BG);
-                tft.setCursor(0,  0); tft.print("AI Terminal. Large text.");
+                tft.setCursor(0,  0); tft.print("CYD AI chatbot. Large text.");
                 tft.setCursor(0, 18); tft.print("Select AI model:");
                 tft.setTextFont(1);
-                showModelChoices();  // re-show 1/2/3 in Font 2, without 9
+                showModelChoices();
+            }
+        }
+
+        // Key I (QWERTY row, index 7) — toggle invert colours, re-show choices
+        {
+            int rowStep = KEY_H + KEY_GAP;
+            int row1Y   = KB_Y + rowStep;
+            int xi      = KB_ROW1_X + 7 * (KEY_W + KEY_GAP);
+            if (inRect(sx, sy, xi, row1Y, KEY_W, KEY_H)) {
+                drawKey(xi, row1Y, KEY_W, KEY_H, "I", TFT_WHITE, COL_BG);
+                delay(100);
+                drawKey(xi, row1Y, KEY_W, KEY_H, "i", COL_KEY_FACE, COL_KEY_LABEL);
+                invertDisplay = !invertDisplay;
+                tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
+                if (largeFont) {
+                    tft.setTextFont(2);
+                    tft.setTextColor(TFT_DARKGREY, COL_BG);
+                    tft.setCursor(0,  0); tft.print("CYD AI chatbot. Large text.");
+                    tft.setCursor(0, 18); tft.print("Select AI model:");
+                    tft.setTextFont(1);
+                } else {
+                    tft.setTextSize(1);
+                    tft.setTextColor(TFT_DARKGREY, COL_BG);
+                    tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
+                    tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
+                }
+                showModelChoices();
             }
         }
     }
@@ -970,6 +1295,7 @@ void selectModel() {
 
 void setup() {
     Serial.begin(115200);
+    waitMsgIdx = random(NUM_WAIT_MSGS);
 
     // Display (init before backlight to avoid white flash)
     tft.init();
@@ -989,28 +1315,32 @@ void setup() {
     unsigned long t0 = millis();
     while (ts.touched() && millis() - t0 < 500) delay(10);
 
+    setupRGBLed();
+
     drawKeyboard();
     drawInputBar();
-    connectWiFi();
+    connectWiFi(true);
 
     // Startup help — drawn directly in history area; cleared on first chat message
     tft.setTextSize(1);
     tft.setTextColor(TFT_DARKGREY, COL_BG);
-    tft.setCursor(0,  0); tft.print("AI Terminal. Swipe down for older chat.");
+    tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
     tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
 
     selectModel();  // draws choices at y=30+ and waits for 1/2/3
 }
 
 void checkWiFiHealth() {
-    if (millis() - lastWiFiCheckMs < 10000) return;
+    updateLedWifi();  // instant — runs every loop, LED reacts immediately to dropout
+
+    if (millis() - lastWiFiCheckMs < 3000) return;
     lastWiFiCheckMs = millis();
 
     bool ok = (WiFi.status() == WL_CONNECTED) && Ping.ping(IPAddress(8,8,8,8), 1);
 
     if (ok != wifiHealthy) {
         wifiHealthy = ok;
-        drawInputBar();  // '>' turns red on fail, white on recovery
+        drawInputBar();  // '>' and Send/More turn red on fail, white on recovery
     }
 
     if (!ok) {
