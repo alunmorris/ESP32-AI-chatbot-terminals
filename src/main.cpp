@@ -69,9 +69,9 @@ bool        invertDisplay     = false;  // true → light grey bg, black text in
 #define KB_H            104
 
 // --- Layout (KB hidden) ---
-#define HIST_H_KB_HIDE  210
-#define IBAR_Y_KB_HIDE  210
-#define IBAR_H_KB_HIDE   30
+#define HIST_H_KB_HIDE  220
+#define IBAR_Y_KB_HIDE  220
+#define IBAR_H_KB_HIDE   20
 
 // --- Colours ---
 #define COL_BG          TFT_BLACK
