@@ -113,7 +113,7 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define KB_ROW3_X    0
 
 // Row 4 special key widths and positions
-// [Shift 40]+[Alt 40]+[Space 158]+[Hide 42]+[BS 40] = 320
+// [Shift 40]+[Alt 40]+[Space 158]+[Hide 42]+[8px gap]+[BS 32] = 320
 #define SHIFT_W     40
 #define SHIFT_X      0
 #define ALT_W       40
@@ -122,8 +122,8 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define SPACE_X     80
 #define HIDE_W      42
 #define HIDE_X     238
-#define BS_W        40   // [⌫] on row 4 right
-#define BS_X       280
+#define BS_W        32   // [⌫] on row 4 right, same width as letter keys
+#define BS_X       288   // flush right edge (SCREEN_W - KEY_W)
 
 // --- Key appearance ---
 #define KEY_RADIUS        3     // rounded corner radius for keys
@@ -202,7 +202,7 @@ void drawKeyboard() {
         x += KEY_W;
     }
 
-    // Row 2: ASDFGHJKL
+    // Row 2: ASDFGHJKL + /
     x = 0;
     int row2Y = KB_Y + 2 * rowStep;
     for (int i = 0; i < 9; i++) {
@@ -211,8 +211,9 @@ void drawKeyboard() {
         drawKey(x, row2Y, KEY_W, KEY_H, label, COL_KEY_FACE, COL_KEY_LABEL);
         x += KEY_W;
     }
+    drawKey(x, row2Y, KEY_W, KEY_H, altOn ? "\\" : (shiftOn ? "?" : "/"), COL_KEY_FACE, COL_KEY_LABEL);
 
-    // Row 3: ZXCVBNM + < > ?
+    // Row 3: ZXCVBNM + , .
     x = 0;
     int row3Y = KB_Y + 3 * rowStep;
     for (int i = 0; i < 7; i++) {
@@ -222,8 +223,7 @@ void drawKeyboard() {
         x += KEY_W;
     }
     drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "[" : (shiftOn ? "<" : ","), COL_KEY_FACE, COL_KEY_LABEL); x += KEY_W;
-    drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "]" : (shiftOn ? ">" : "."), COL_KEY_FACE, COL_KEY_LABEL); x += KEY_W;
-    drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "\\" : (shiftOn ? "?" : "/"), COL_KEY_FACE, COL_KEY_LABEL);
+    drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "]" : (shiftOn ? ">" : "."), COL_KEY_FACE, COL_KEY_LABEL);
 
     // Row 4: [Shift] [Alt] [Space] [Hide] [BS] — 1px lower, 1px shorter (extra gap above)
     int row4Y = KB_Y + 4 * rowStep + 1;
@@ -553,7 +553,7 @@ String typeKBKey(int sx, int sy) {
             }
             break;
         }
-        case 2: {  // ASDFGHJKL
+        case 2: {  // ASDFGHJKL + /
             x = 0;
             for (int i = 0; i < 9; i++, x += KEY_W) {
                 if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
@@ -561,9 +561,13 @@ String typeKBKey(int sx, int sy) {
                     typed = String(c); lbl[0] = c; lbl[1] = '\0'; kx = x; break;
                 }
             }
+            if (typed.length() == 0 && inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
+                const char* s = altOn ? "\\" : (shiftOn ? "?" : "/");
+                typed = String(s); strncpy(lbl, s, sizeof(lbl) - 1); kx = x;
+            }
             break;
         }
-        case 3: {  // ZXCVBNM + ,./  (shifted: <>?  alt: [\])
+        case 3: {  // ZXCVBNM + ,.  (shifted: <>  alt: [])
             x = 0;
             for (int i = 0; i < 7; i++, x += KEY_W) {
                 if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
@@ -572,11 +576,11 @@ String typeKBKey(int sx, int sy) {
                 }
             }
             if (typed.length() == 0) {
-                const char unshifted[] = { ',', '.', '/' };
-                const char shifted[]   = { '<', '>', '?' };
-                const char alt_ext[]   = { '[', ']', '\\' };
+                const char unshifted[] = { ',', '.' };
+                const char shifted[]   = { '<', '>' };
+                const char alt_ext[]   = { '[', ']' };
                 const char* extras = altOn ? alt_ext : (shiftOn ? shifted : unshifted);
-                for (int i = 0; i < 3; i++, x += KEY_W) {
+                for (int i = 0; i < 2; i++, x += KEY_W) {
                     if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
                         typed = String(extras[i]); lbl[0] = extras[i]; lbl[1] = '\0'; kx = x; break;
                     }
