@@ -753,7 +753,7 @@ void connectWiFi(bool showSplash = false) {
     if (showSplash) {
         tft.setFreeFont(&DejaVuSansBold12px);
         tft.setTextColor(TFT_YELLOW, COL_BG);
-        tft.drawString("CYD AI chatbot v: -0.1.", 0, 0);
+        tft.drawString("CYD AI chatbot v: 0.1.", 0, 0);
         tft.drawString("It's cheap for a reason.", 0, LINE_H_LARGE);
         tft.setTextColor(TFT_BLUE, COL_BG);
         char wifiMsg[80];
@@ -958,16 +958,28 @@ String callGemini(const char* prompt) {
 
     if (fullResp.length() == 0) return "ERR: empty response";
 
+    // Extract HTTP status code
+    int httpStatus = 200;
+    int statusPos = fullResp.indexOf("HTTP/");
+    if (statusPos >= 0) {
+        int eol = fullResp.indexOf('\n', statusPos);
+        sscanf(fullResp.substring(statusPos, eol).c_str(), "HTTP/%*s %d", &httpStatus);
+    }
+
     // Locate JSON body — starts at first '{'
     int jsonStart = fullResp.indexOf('{');
-    if (jsonStart < 0) return "ERR: no JSON in response";
+    if (jsonStart < 0) {
+        char buf[40]; snprintf(buf, sizeof(buf), "ERR: HTTP %d, no JSON", httpStatus);
+        return String(buf);
+    }
     String respBody = fullResp.substring(jsonStart);
 
     // Parse JSON — success if candidates present, error if error.message present
     JsonDocument respDoc;
     if (deserializeJson(respDoc, respBody) != DeserializationError::Ok) {
-        Serial.println("Bad JSON: " + respBody.substring(0, 200));
-        return "ERR: JSON parse failed";
+        Serial.println("Bad JSON (HTTP " + String(httpStatus) + "): " + respBody.substring(0, 300));
+        char buf[40]; snprintf(buf, sizeof(buf), "ERR: HTTP %d, bad JSON", httpStatus);
+        return String(buf);
     }
 
     // Check for API error
@@ -1175,6 +1187,7 @@ void sendPrompt() {
     }
 
     moreMode = true;   // after every reply, offer "More"
+    wifiHealthy = (WiFi.status() == WL_CONNECTED);  // refresh after API call; LED uses RSSI independently
     drawInputBar();
 }
 
