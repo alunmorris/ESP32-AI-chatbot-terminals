@@ -1,5 +1,6 @@
 // CYD AI chatbot for CYD28 (ESP32-2432S028R)
 // 280226 Add Grok API (xAI), key 4 at boot; route callGemini/callGrok via useGrok flag
+// 280226 Bold font: replace Font 2 with FreeSansBold9pt7b, update LINE_H_LARGE=16 SPLASH_H=48
 // 280226 RGB LED WiFi signal strength: blue=strong, cyan, green, orange, red=lost
 // 270226 Fix large-font truncation: grow Message.text→2048, full→2060, buffers; setTextWrap(false)
 // 270226 WiFi health ping, red > on fail, reconnect; global endpoint for Flash
