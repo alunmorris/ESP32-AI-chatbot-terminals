@@ -527,8 +527,8 @@ String typeKBKey(int sx, int sy) {
 
     switch (rowIdx) {
         case 0: {  // number / symbol / alt row
-            x = KB_ROW3_X;
-            for (int i = 0; i < 10; i++, x += KEY_W + KEY_GAP) {
+            x = 0;
+            for (int i = 0; i < 10; i++, x += KEY_W) {
                 if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
                     if (altOn) {
                         typed = KB_NUM_ALT_TYPED[i];
@@ -544,8 +544,8 @@ String typeKBKey(int sx, int sy) {
             break;
         }
         case 1: {  // QWERTY
-            x = KB_ROW1_X;
-            for (int i = 0; i < 10; i++, x += KEY_W + KEY_GAP) {
+            x = 0;
+            for (int i = 0; i < 10; i++, x += KEY_W) {
                 if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
                     char c = shiftOn ? KB_ROW1[i] : (KB_ROW1[i] + 32);
                     typed = String(c); lbl[0] = c; lbl[1] = '\0'; kx = x; break;
@@ -553,9 +553,9 @@ String typeKBKey(int sx, int sy) {
             }
             break;
         }
-        case 2: {  // ASDFGHJKL (BS handled in handleTouch)
-            x = KB_ROW2_X;
-            for (int i = 0; i < 9; i++, x += KEY_W + KEY_GAP) {
+        case 2: {  // ASDFGHJKL
+            x = 0;
+            for (int i = 0; i < 9; i++, x += KEY_W) {
                 if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
                     char c = shiftOn ? KB_ROW2[i] : (KB_ROW2[i] + 32);
                     typed = String(c); lbl[0] = c; lbl[1] = '\0'; kx = x; break;
@@ -564,8 +564,8 @@ String typeKBKey(int sx, int sy) {
             break;
         }
         case 3: {  // ZXCVBNM + ,./  (shifted: <>?  alt: [\])
-            x = KB_ROW3_X;
-            for (int i = 0; i < 7; i++, x += KEY_W + KEY_GAP) {
+            x = 0;
+            for (int i = 0; i < 7; i++, x += KEY_W) {
                 if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
                     char c = shiftOn ? KB_ROW3[i] : (KB_ROW3[i] + 32);
                     typed = String(c); lbl[0] = c; lbl[1] = '\0'; kx = x; break;
@@ -576,7 +576,7 @@ String typeKBKey(int sx, int sy) {
                 const char shifted[]   = { '<', '>', '?' };
                 const char alt_ext[]   = { '[', ']', '\\' };
                 const char* extras = altOn ? alt_ext : (shiftOn ? shifted : unshifted);
-                for (int i = 0; i < 3; i++, x += KEY_W + KEY_GAP) {
+                for (int i = 0; i < 3; i++, x += KEY_W) {
                     if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
                         typed = String(extras[i]); lbl[0] = extras[i]; lbl[1] = '\0'; kx = x; break;
                     }
@@ -1208,8 +1208,8 @@ void selectModel() {
         mapTouch(pt, sx, sy);
 
         // Hit-test keys 1, 2, 3 (Gemini models)
-        int x = KB_ROW3_X;
-        for (int i = 0; i < 3; i++, x += KEY_W + KEY_GAP) {
+        int x = 0;
+        for (int i = 0; i < 3; i++, x += KEY_W) {
             if (inRect(sx, sy, x, KB_Y, KEY_W, KEY_H)) {
                 char lbl[2] = { char('1' + i), '\0' };
                 drawKey(x, KB_Y, KEY_W, KEY_H, lbl, TFT_WHITE, COL_BG);
@@ -1242,7 +1242,7 @@ void selectModel() {
         }
 
         // Key 4 — Grok 4.1 Fast
-        int x4 = KB_ROW3_X + 3 * (KEY_W + KEY_GAP);
+        int x4 = 3 * KEY_W;
         if (inRect(sx, sy, x4, KB_Y, KEY_W, KEY_H)) {
             drawKey(x4, KB_Y, KEY_W, KEY_H, "4", TFT_WHITE, COL_BG);
             delay(KEY_FLASH_MS);
@@ -1273,7 +1273,7 @@ void selectModel() {
         if (!largeFont) {
             int rowStep = KEY_H + KEY_GAP;
             int row3Y   = KB_Y + 3 * rowStep;
-            int xb      = KB_ROW3_X + 4 * (KEY_W + KEY_GAP);
+            int xb      = 4 * KEY_W;
             if (inRect(sx, sy, xb, row3Y, KEY_W, KEY_H)) {
                 drawKey(xb, row3Y, KEY_W, KEY_H, "B", TFT_WHITE, COL_BG);
                 delay(KEY_FLASH_MS);
@@ -1293,7 +1293,7 @@ void selectModel() {
         {
             int rowStep = KEY_H + KEY_GAP;
             int row1Y   = KB_Y + rowStep;
-            int xi      = KB_ROW1_X + 7 * (KEY_W + KEY_GAP);
+            int xi      = 7 * KEY_W;
             if (inRect(sx, sy, xi, row1Y, KEY_W, KEY_H)) {
                 drawKey(xi, row1Y, KEY_W, KEY_H, "I", TFT_WHITE, COL_BG);
                 delay(KEY_FLASH_MS);
