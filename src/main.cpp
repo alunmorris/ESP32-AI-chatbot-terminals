@@ -168,11 +168,11 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 void drawKey(int x, int y, int w, int h, const char* label, uint16_t face, uint16_t text) {
     tft.fillRoundRect(x, y, w, h, KEY_RADIUS, face);
     tft.setTextColor(text, face);
-    tft.setTextSize(1);
-    int tx = x + (w - strlen(label) * 6) / 2;
-    int ty = y + (h - 8) / 2;
-    tft.setCursor(tx, ty);
-    tft.print(label);
+    tft.setFreeFont(&DejaVuSansBold8px);
+    int tx = x + (w - (int)tft.textWidth(label)) / 2;
+    int ty = y + (h - 10) / 2;   // 10 = yAdvance
+    tft.drawString(label, tx, ty);
+    tft.setTextFont(1);           // restore GLCD for everything else
 }
 
 void drawKeyboard() {
