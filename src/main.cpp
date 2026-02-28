@@ -879,7 +879,7 @@ String callGemini(const char* prompt) {
     JsonObject sysInstr = reqDoc["system_instruction"].to<JsonObject>();
     JsonArray  sysParts = sysInstr["parts"].to<JsonArray>();
     JsonObject sysPart  = sysParts.add<JsonObject>();
-    sysPart["text"]     = "Respond in 150 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols. Never include URLs or hyperlinks. When quoting current or time-sensitive information, use your search tool to check live sources first.";
+    sysPart["text"]     = "Respond in 150 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols. Use paragraphs to separate distinct ideas. Never include URLs or hyperlinks. When quoting current or time-sensitive information, use your search tool to check live sources first.";
 
     JsonArray contents = reqDoc["contents"].to<JsonArray>();
 
@@ -1002,7 +1002,7 @@ String callGrok(const char* prompt) {
     JsonDocument reqDoc;
     reqDoc["model"]        = GROK_MODEL;
     reqDoc["stream"]       = false;
-    reqDoc["instructions"] = "Respond in 150 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind. Do not mention where information came from. When quoting current or time-sensitive information, use your web search tool to check live sources first.";
+    reqDoc["instructions"] = "Respond in 150 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind. Do not mention where information came from. When quoting current or time-sensitive information, use your web search tool to check live sources first.";
 
     JsonArray input = reqDoc["input"].to<JsonArray>();
 
