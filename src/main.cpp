@@ -584,7 +584,7 @@ String typeKBKey(int sx, int sy) {
             }
             break;
         }
-        // case 4: Shift/Alt/Space/Hide/CLR — handled in handleTouch()
+        // case 4: Shift/Alt/Space/Hide/BS — handled in handleTouch()
     }
 
     if (kx >= 0 && typed.length() > 0) {
@@ -660,21 +660,7 @@ void handleTouch() {
     // --- Keyboard area ---
     if (kbVisible && sy >= KB_Y) {
         int rowStep = KEY_H + KEY_GAP;
-        int row2Y   = KB_Y + 2 * rowStep;
         int row4Y   = KB_Y + 4 * rowStep;
-
-        // Backspace (row 2 right)
-        if (inRect(sx, sy, SCREEN_W - BS_W - 1, row2Y, BS_W, KEY_H)) {
-            drawKey(SCREEN_W - BS_W - 1, row2Y, BS_W, KEY_H, "<-", TFT_WHITE, COL_BG);
-            delay(KEY_FLASH_MS);
-            drawKey(SCREEN_W - BS_W - 1, row2Y, BS_W, KEY_H, "<-", COL_BTN_BG, COL_BTN_TEXT);
-            if (inputLen > 0) {
-                inputBuf[--inputLen] = '\0';
-                if (inputLen == 0 && historyCount > 0) moreMode = true;
-                drawInputBar();
-            }
-            return;
-        }
 
         // Row 4 special keys
         if (sy >= row4Y && sy < row4Y + KEY_H) {
