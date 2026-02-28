@@ -322,7 +322,7 @@ void rebuildLines() {
             while (*p && lineCount < MAX_LINES - 1) {
                 if (*p == '\n') {
                     // Only flush if there's content — skip blank lines to
-                    // avoid wasting the small number of visible Font-2 slots
+                    // avoid wasting the small number of visible large-font slots
                     if (lineBuf[0]) {
                         strncpy(lines[lineCount], lineBuf, 53);
                         lines[lineCount][53] = '\0';
@@ -408,7 +408,7 @@ void drawHistory() {
     uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
     tft.fillRect(0, 0, SCREEN_W, histH, bg);
 
-    int lineH  = largeFont ? LINE_H_LARGE : LINE_H_SMALL;   // Font2: 16px+2gap  GLCD: 8px+2gap
+    int lineH  = largeFont ? LINE_H_LARGE : LINE_H_SMALL;   // FreeSansBold9pt7b: 16px  GLCD: 8px+2gap
     int maxVis = histH / lineH;
 
     // scrollOffset=0 means show bottom of history
@@ -760,17 +760,14 @@ void updateLedWifi() {
 // --- WiFi ---
 void connectWiFi(bool showSplash = false) {
     if (showSplash) {
-        tft.setTextFont(2);
+        tft.setFreeFont(&FreeSansBold9pt7b);
         tft.setTextColor(TFT_YELLOW, COL_BG);
-        tft.setCursor(0, 0);
-        tft.print("CYD AI chatbot v: -0.1.");
-        tft.setCursor(0, LINE_H_LARGE);
-        tft.print("It's cheap for a reason.");
+        tft.drawString("CYD AI chatbot v: -0.1.", 0, 0);
+        tft.drawString("It's cheap for a reason.", 0, LINE_H_LARGE);
         tft.setTextColor(TFT_BLUE, COL_BG);
-        tft.setCursor(0, 2 * LINE_H_LARGE);
         char wifiMsg[80];
         snprintf(wifiMsg, sizeof(wifiMsg), "Connecting: %.55s...", WIFI_SSID);
-        tft.print(wifiMsg);
+        tft.drawString(wifiMsg, 0, 2 * LINE_H_LARGE);
         tft.setTextFont(1);
     }
 
@@ -1238,12 +1235,12 @@ void selectModel() {
                 uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
                 tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
                 if (largeFont) {
-                    tft.setTextFont(2);
+                    tft.setFreeFont(&FreeSansBold9pt7b);
                     tft.setTextColor(TFT_GREEN, bg);
-                    tft.setCursor(0,  0); tft.print("CYD AI chatbot");
-                    tft.setCursor(0, LINE_H_LARGE); tft.print(GEMINI_MODEL);
+                    tft.drawString("CYD AI chatbot", 0, 0);
+                    tft.drawString(GEMINI_MODEL, 0, LINE_H_LARGE);
                     tft.setTextColor(TFT_DARKGREY, bg);
-                    tft.setCursor(0, 2 * LINE_H_LARGE); tft.print("Ready.");
+                    tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
                     tft.setTextFont(1);
                 } else {
                     tft.setTextSize(1);
@@ -1267,12 +1264,12 @@ void selectModel() {
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
             if (largeFont) {
-                tft.setTextFont(2);
+                tft.setFreeFont(&FreeSansBold9pt7b);
                 tft.setTextColor(TFT_GREEN, bg);
-                tft.setCursor(0,  0); tft.print("CYD AI chatbot");
-                tft.setCursor(0, LINE_H_LARGE); tft.print("Grok 4.1 Fast");
+                tft.drawString("CYD AI chatbot", 0, 0);
+                tft.drawString("Grok 4.1 Fast", 0, LINE_H_LARGE);
                 tft.setTextColor(TFT_DARKGREY, bg);
-                tft.setCursor(0, 2 * LINE_H_LARGE); tft.print("Ready.");
+                tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
                 tft.setTextFont(1);
             } else {
                 tft.setTextSize(1);
@@ -1296,10 +1293,10 @@ void selectModel() {
                 drawKey(xb, row3Y, KEY_W, KEY_H, "b", COL_KEY_FACE, COL_KEY_LABEL);
                 largeFont = true;
                 tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
-                tft.setTextFont(2);
+                tft.setFreeFont(&FreeSansBold9pt7b);
                 tft.setTextColor(TFT_DARKGREY, COL_BG);
-                tft.setCursor(0,  0); tft.print("CYD AI chatbot. Large text.");
-                tft.setCursor(0, LINE_H_LARGE); tft.print("Select AI model:");
+                tft.drawString("CYD AI chatbot. Large text.", 0, 0);
+                tft.drawString("Select AI model:", 0, LINE_H_LARGE);
                 tft.setTextFont(1);
                 showModelChoices();
             }
@@ -1317,10 +1314,10 @@ void selectModel() {
                 invertDisplay = !invertDisplay;
                 tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
                 if (largeFont) {
-                    tft.setTextFont(2);
+                    tft.setFreeFont(&FreeSansBold9pt7b);
                     tft.setTextColor(TFT_DARKGREY, COL_BG);
-                    tft.setCursor(0,  0); tft.print("CYD AI chatbot. Large text.");
-                    tft.setCursor(0, LINE_H_LARGE); tft.print("Select AI model:");
+                    tft.drawString("CYD AI chatbot. Large text.", 0, 0);
+                    tft.drawString("Select AI model:", 0, LINE_H_LARGE);
                     tft.setTextFont(1);
                 } else {
                     tft.setTextSize(1);
