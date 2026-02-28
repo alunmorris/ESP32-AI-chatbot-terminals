@@ -181,7 +181,7 @@ void drawKeyboard() {
     int x;
 
     // Row 0: number / symbol / alt keys
-    x = KB_ROW3_X;
+    x = 0;
     for (int i = 0; i < 10; i++) {
         if (altOn) {
             drawKey(x, KB_Y, KEY_W, KEY_H, KB_NUM_ALT_DISP[i], COL_KEY_FACE, COL_KEY_LABEL);
@@ -189,41 +189,40 @@ void drawKeyboard() {
             char label[2] = { shiftOn ? KB_NUM_SHIFTED[i] : KB_NUM_UNSHIFTED[i], 0 };
             drawKey(x, KB_Y, KEY_W, KEY_H, label, COL_KEY_FACE, COL_KEY_LABEL);
         }
-        x += KEY_W + KEY_GAP;
+        x += KEY_W;
     }
 
     // Row 1: QWERTY (centred, no Hide button)
-    x = KB_ROW1_X;
+    x = 0;
     int row1Y = KB_Y + rowStep;
     for (int i = 0; i < 10; i++) {
         char c = shiftOn ? KB_ROW1[i] : (KB_ROW1[i] + 32);
         char label[2] = { c, 0 };
         drawKey(x, row1Y, KEY_W, KEY_H, label, COL_KEY_FACE, COL_KEY_LABEL);
-        x += KEY_W + KEY_GAP;
+        x += KEY_W;
     }
 
-    // Row 2: ASDFGHJKL + [⌫]
-    x = KB_ROW2_X;
+    // Row 2: ASDFGHJKL
+    x = 0;
     int row2Y = KB_Y + 2 * rowStep;
     for (int i = 0; i < 9; i++) {
         char c = shiftOn ? KB_ROW2[i] : (KB_ROW2[i] + 32);
         char label[2] = { c, 0 };
         drawKey(x, row2Y, KEY_W, KEY_H, label, COL_KEY_FACE, COL_KEY_LABEL);
-        x += KEY_W + KEY_GAP;
+        x += KEY_W;
     }
-    drawKey(SCREEN_W - BS_W - 1, row2Y, BS_W, KEY_H, "<-", COL_BTN_BG, COL_BTN_TEXT);
 
     // Row 3: ZXCVBNM + < > ?
-    x = KB_ROW3_X;
+    x = 0;
     int row3Y = KB_Y + 3 * rowStep;
     for (int i = 0; i < 7; i++) {
         char c = shiftOn ? KB_ROW3[i] : (KB_ROW3[i] + 32);
         char label[2] = { c, 0 };
         drawKey(x, row3Y, KEY_W, KEY_H, label, COL_KEY_FACE, COL_KEY_LABEL);
-        x += KEY_W + KEY_GAP;
+        x += KEY_W;
     }
-    drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "[" : (shiftOn ? "<" : ","), COL_KEY_FACE, COL_KEY_LABEL); x += KEY_W + KEY_GAP;
-    drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "]" : (shiftOn ? ">" : "."), COL_KEY_FACE, COL_KEY_LABEL); x += KEY_W + KEY_GAP;
+    drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "[" : (shiftOn ? "<" : ","), COL_KEY_FACE, COL_KEY_LABEL); x += KEY_W;
+    drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "]" : (shiftOn ? ">" : "."), COL_KEY_FACE, COL_KEY_LABEL); x += KEY_W;
     drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "\\" : (shiftOn ? "?" : "/"), COL_KEY_FACE, COL_KEY_LABEL);
 
     // Row 4: [Shift] [Alt] [Space] [Hide] [BS]
