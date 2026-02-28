@@ -165,11 +165,11 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define GROK_MODEL        "grok-4-1-fast-reasoning"
 
 void drawKey(int x, int y, int w, int h, const char* label, uint16_t face, uint16_t text) {
-    tft.fillRoundRect(x, y, w, h, KEY_RADIUS, face);
+    tft.fillRoundRect(x, y, w - 1, h, KEY_RADIUS, face);
     tft.setTextColor(text, face);
     tft.setFreeFont(&DejaVuSansBold12px);
     int tx = x + (w - (int)tft.textWidth(label)) / 2;
-    int ty = y + (h - 15) / 2;   // 15 = yAdvance for DejaVuSansBold12px
+    int ty = y + (h - 15) / 2 + 1;   // 15 = yAdvance; +1 lowers text slightly
     tft.drawString(label, tx, ty);
     tft.setTextFont(1);           // restore GLCD for everything else
 }
@@ -1155,6 +1155,7 @@ void sendPrompt() {
     }
     prompt[127] = '\0';
     moreMode = false;
+    kbVisible = false;   // hide KB; drawHistory() covers the KB area
 
     // Show user message and thinking indicator
     addMessage(true, false, prompt);
