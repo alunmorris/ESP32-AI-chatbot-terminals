@@ -21,6 +21,7 @@
 #include <SPI.h>
 #include <TFT_eSPI.h>
 #include "fonts/DejaVuSansBold12px.h"  // custom 12px bold, yAdvance=15
+#include "fonts/DejaVuSansBold8px.h"   // custom 8px bold, yAdvance=10
 #include <XPT2046_Touchscreen.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
