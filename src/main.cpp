@@ -1,6 +1,6 @@
 // CYD AI chatbot for CYD28 (ESP32-2432S028R)
 // 280226 Add Grok API (xAI), key 4 at boot; route callGemini/callGrok via useGrok flag
-// 280226 Bold font: replace Font 2 with FreeSansBold9pt7b, update LINE_H_LARGE=16 SPLASH_H=48
+// 280226 Bold font: custom DejaVuSansBold 12px (yAdv=15), LINE_H_LARGE=15 SPLASH_H=45
 // 280226 RGB LED WiFi signal strength: blue=strong, cyan, green, orange, red=lost
 // 270226 Fix large-font truncation: grow Message.text→2048, full→2060, buffers; setTextWrap(false)
 // 270226 WiFi health ping, red > on fail, reconnect; global endpoint for Flash
@@ -20,7 +20,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
-// FreeSansBold9pt7b (FF25/FSSB9) is already included by TFT_eSPI via gfxfont.h when LOAD_GFXFF is set
+#include "fonts/DejaVuSansBold12px.h"  // custom 12px bold, yAdvance=15
 #include <XPT2046_Touchscreen.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -35,7 +35,7 @@ const char* GROK_API_KEY    = "GROK_KEY_REMOVED";
 char        GEMINI_MODEL[48]  = "gemini-3.1-pro-preview"; // overwritten at boot
 bool        geminiUseGlobal   = false;  // true → /locations/global/ in path
 bool        useGrok           = false;  // true → route to Grok API instead of Gemini
-bool        largeFont         = false;  // true → FreeSansBold9pt7b in history area
+bool        largeFont         = false;  // true → DejaVuSansBold12px in history area
 bool        invertDisplay     = false;  // true → light grey bg, black text in history area
 #define COL_INVERT_BG   0xC618          // light grey (~RGB 192,192,192)
 
@@ -129,9 +129,9 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define KEY_RADIUS        3     // rounded corner radius for keys
 
 // --- Layout metrics ---
-#define LINE_H_LARGE     16     // FreeSansBold9pt7b line height (yAdvance=16)
+#define LINE_H_LARGE     15     // DejaVuSansBold12px line height (yAdvance=15)
 #define LINE_H_SMALL     10     // GLCD line height (8px + 2px gap)
-#define SPLASH_H         48     // height of boot splash area to clear after connect (3 × LINE_H_LARGE)
+#define SPLASH_H         45     // height of boot splash area to clear after connect (3 × LINE_H_LARGE)
 
 // --- Input bar ---
 #define INPUT_BUF_SIZE  128     // input text buffer including null terminator
@@ -315,8 +315,8 @@ void rebuildLines() {
         }
 
         if (largeFont) {
-            // Pixel-width word wrap for FreeSansBold9pt7b
-            tft.setFreeFont(&FreeSansBold9pt7b);
+            // Pixel-width word wrap for DejaVuSansBold12px
+            tft.setFreeFont(&DejaVuSansBold12px);
             char lineBuf[54] = "";
             const char* p = full;
             while (*p && lineCount < MAX_LINES - 1) {
@@ -408,14 +408,14 @@ void drawHistory() {
     uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
     tft.fillRect(0, 0, SCREEN_W, histH, bg);
 
-    int lineH  = largeFont ? LINE_H_LARGE : LINE_H_SMALL;   // FreeSansBold9pt7b: 16px  GLCD: 8px+2gap
+    int lineH  = largeFont ? LINE_H_LARGE : LINE_H_SMALL;   // DejaVuSansBold12px: 15px  GLCD: 8px+2gap
     int maxVis = histH / lineH;
 
     // scrollOffset=0 means show bottom of history
     int firstIdx = lineCount - maxVis - scrollOffset;
     if (firstIdx < 0) firstIdx = 0;
 
-    if (largeFont) tft.setFreeFont(&FreeSansBold9pt7b); else tft.setTextSize(1);
+    if (largeFont) tft.setFreeFont(&DejaVuSansBold12px); else tft.setTextSize(1);
     tft.setTextWrap(false);  // prevent overflow wrapping onto adjacent lines
     for (int i = 0; i < maxVis && (firstIdx + i) < lineCount; i++) {
         int idx = firstIdx + i;
@@ -760,7 +760,7 @@ void updateLedWifi() {
 // --- WiFi ---
 void connectWiFi(bool showSplash = false) {
     if (showSplash) {
-        tft.setFreeFont(&FreeSansBold9pt7b);
+        tft.setFreeFont(&DejaVuSansBold12px);
         tft.setTextColor(TFT_YELLOW, COL_BG);
         tft.drawString("CYD AI chatbot v: -0.1.", 0, 0);
         tft.drawString("It's cheap for a reason.", 0, LINE_H_LARGE);
@@ -1235,7 +1235,7 @@ void selectModel() {
                 uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
                 tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
                 if (largeFont) {
-                    tft.setFreeFont(&FreeSansBold9pt7b);
+                    tft.setFreeFont(&DejaVuSansBold12px);
                     tft.setTextColor(TFT_GREEN, bg);
                     tft.drawString("CYD AI chatbot", 0, 0);
                     tft.drawString(GEMINI_MODEL, 0, LINE_H_LARGE);
@@ -1264,7 +1264,7 @@ void selectModel() {
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
             if (largeFont) {
-                tft.setFreeFont(&FreeSansBold9pt7b);
+                tft.setFreeFont(&DejaVuSansBold12px);
                 tft.setTextColor(TFT_GREEN, bg);
                 tft.drawString("CYD AI chatbot", 0, 0);
                 tft.drawString("Grok 4.1 Fast", 0, LINE_H_LARGE);
@@ -1293,7 +1293,7 @@ void selectModel() {
                 drawKey(xb, row3Y, KEY_W, KEY_H, "b", COL_KEY_FACE, COL_KEY_LABEL);
                 largeFont = true;
                 tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
-                tft.setFreeFont(&FreeSansBold9pt7b);
+                tft.setFreeFont(&DejaVuSansBold12px);
                 tft.setTextColor(TFT_DARKGREY, COL_BG);
                 tft.drawString("CYD AI chatbot. Large text.", 0, 0);
                 tft.drawString("Select AI model:", 0, LINE_H_LARGE);
@@ -1314,7 +1314,7 @@ void selectModel() {
                 invertDisplay = !invertDisplay;
                 tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
                 if (largeFont) {
-                    tft.setFreeFont(&FreeSansBold9pt7b);
+                    tft.setFreeFont(&DejaVuSansBold12px);
                     tft.setTextColor(TFT_DARKGREY, COL_BG);
                     tft.drawString("CYD AI chatbot. Large text.", 0, 0);
                     tft.drawString("Select AI model:", 0, LINE_H_LARGE);
