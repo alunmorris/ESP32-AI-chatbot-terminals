@@ -35,7 +35,7 @@ const char* GROK_API_KEY    = "GROK_KEY_REMOVED";
 char        GEMINI_MODEL[48]  = "gemini-3.1-pro-preview"; // overwritten at boot
 bool        geminiUseGlobal   = false;  // true → /locations/global/ in path
 bool        useGrok           = false;  // true → route to Grok API instead of Gemini
-bool        largeFont         = false;  // true → Font 2 (16px) in history area
+bool        largeFont         = false;  // true → FreeSansBold9pt7b in history area
 bool        invertDisplay     = false;  // true → light grey bg, black text in history area
 #define COL_INVERT_BG   0xC618          // light grey (~RGB 192,192,192)
 
@@ -315,8 +315,8 @@ void rebuildLines() {
         }
 
         if (largeFont) {
-            // Pixel-width word wrap for Font 2
-            tft.setTextFont(2);
+            // Pixel-width word wrap for FreeSansBold9pt7b
+            tft.setFreeFont(&FreeSansBold9pt7b);
             char lineBuf[54] = "";
             const char* p = full;
             while (*p && lineCount < MAX_LINES - 1) {
@@ -415,15 +415,15 @@ void drawHistory() {
     int firstIdx = lineCount - maxVis - scrollOffset;
     if (firstIdx < 0) firstIdx = 0;
 
-    if (largeFont) tft.setTextFont(2); else tft.setTextSize(1);
+    if (largeFont) tft.setFreeFont(&FreeSansBold9pt7b); else tft.setTextSize(1);
     tft.setTextWrap(false);  // prevent overflow wrapping onto adjacent lines
     for (int i = 0; i < maxVis && (firstIdx + i) < lineCount; i++) {
         int idx = firstIdx + i;
         uint16_t col = lineColor[idx];
         if (invertDisplay) col = TFT_BLACK;
         tft.setTextColor(col, bg);
-        tft.setCursor(0, i * lineH);
-        tft.print(lines[idx]);
+        if (largeFont) tft.drawString(lines[idx], 0, i * lineH);
+        else { tft.setCursor(0, i * lineH); tft.print(lines[idx]); }
     }
     tft.setTextWrap(true);
     tft.setTextFont(1);  // restore GLCD for everything else
