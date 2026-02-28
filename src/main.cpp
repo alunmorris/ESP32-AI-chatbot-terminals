@@ -105,26 +105,25 @@ const char* KB_NUM_SHIFTED   = "!@#$%^&*()";
 const char* KB_NUM_ALT_TYPED[10] = { "|", "\"", ":", "{", "}", "'", "@", "-", "+", "=" };
 const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+", "=" };
 
-#define KEY_W       28
+#define KEY_W       32
 #define KEY_H       20
 #define KEY_GAP      1
-#define KB_ROW1_X   16   // row 1 centred (10 keys = 289px, (320-289)/2 = 16)
-#define KB_ROW2_X    7   // row 2 offset (9 keys + BS right-aligned)
-#define KB_ROW3_X   16   // row 0 & row 3 (10 keys each, centred)
+#define KB_ROW1_X    0   // all rows flush left — 10 × 32 = 320px
+#define KB_ROW2_X    0
+#define KB_ROW3_X    0
 
 // Row 4 special key widths and positions
-// 2+[Shift 40]+2+[Alt 40]+2+[Space 146]+2+[Hide 42]+2+[CLR 40]+2 = 320
+// [Shift 40]+[Alt 40]+[Space 158]+[Hide 42]+[BS 40] = 320
 #define SHIFT_W     40
-#define SHIFT_X      2
+#define SHIFT_X      0
 #define ALT_W       40
-#define ALT_X       44
-#define SPACE_W    146
-#define SPACE_X     86
+#define ALT_X       40
+#define SPACE_W    158
+#define SPACE_X     80
 #define HIDE_W      42
-#define HIDE_X     234
-#define CLR_W       40
-#define CLR_X      278
-#define BS_W        36   // [⌫] on row 2 right
+#define HIDE_X     238
+#define BS_W        40   // [⌫] on row 4 right
+#define BS_X       280
 
 // --- Key appearance ---
 #define KEY_RADIUS        3     // rounded corner radius for keys
@@ -168,9 +167,9 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 void drawKey(int x, int y, int w, int h, const char* label, uint16_t face, uint16_t text) {
     tft.fillRoundRect(x, y, w, h, KEY_RADIUS, face);
     tft.setTextColor(text, face);
-    tft.setFreeFont(&DejaVuSansBold8px);
+    tft.setFreeFont(&DejaVuSansBold12px);
     int tx = x + (w - (int)tft.textWidth(label)) / 2;
-    int ty = y + (h - 10) / 2;   // 10 = ascent(8)+descent(2); equals yAdvance for this font
+    int ty = y + (h - 15) / 2;   // 15 = yAdvance for DejaVuSansBold12px
     tft.drawString(label, tx, ty);
     tft.setTextFont(1);           // restore GLCD for everything else
 }
@@ -227,7 +226,7 @@ void drawKeyboard() {
     drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "]" : (shiftOn ? ">" : "."), COL_KEY_FACE, COL_KEY_LABEL); x += KEY_W + KEY_GAP;
     drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "\\" : (shiftOn ? "?" : "/"), COL_KEY_FACE, COL_KEY_LABEL);
 
-    // Row 4: [Shift] [Alt] [Space] [Hide] [CLR]
+    // Row 4: [Shift] [Alt] [Space] [Hide] [BS]
     int row4Y = KB_Y + 4 * rowStep;
     uint16_t shiftFace = shiftOn ? TFT_NAVY : COL_BTN_BG;
     uint16_t altFace   = altOn   ? TFT_NAVY : COL_BTN_BG;
@@ -235,7 +234,7 @@ void drawKeyboard() {
     drawKey(ALT_X,   row4Y, ALT_W,   KEY_H, altOn   ? "ALT" : "alt", altFace,   COL_BTN_TEXT);
     drawKey(SPACE_X, row4Y, SPACE_W, KEY_H, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
     drawKey(HIDE_X,  row4Y, HIDE_W,  KEY_H, "Hide",  COL_BTN_BG, COL_BTN_TEXT);
-    drawKey(CLR_X,   row4Y, CLR_W,   KEY_H, "CLR",   COL_BTN_BG, COL_BTN_TEXT);
+    drawKey(BS_X,    row4Y, BS_W,    KEY_H, "<",     COL_BTN_BG, COL_BTN_TEXT);
 }
 
 // --- WiFi health ---
@@ -698,13 +697,11 @@ void handleTouch() {
                 tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
                 drawHistory();
                 drawInputBar();
-            } else if (inRect(sx, sy, CLR_X, row4Y, CLR_W, KEY_H)) {
-                drawKey(CLR_X, row4Y, CLR_W, KEY_H, "CLR", TFT_WHITE, COL_BTN_TEXT);
+            } else if (inRect(sx, sy, BS_X, row4Y, BS_W, KEY_H)) {
+                drawKey(BS_X, row4Y, BS_W, KEY_H, "<", TFT_WHITE, COL_BTN_TEXT);
                 delay(KEY_FLASH_MS);
-                drawKey(CLR_X, row4Y, CLR_W, KEY_H, "CLR", COL_BTN_BG, COL_BTN_TEXT);
-                inputBuf[0] = '\0'; inputLen = 0;
-                if (historyCount > 0) moreMode = true;
-                drawInputBar();
+                drawKey(BS_X, row4Y, BS_W, KEY_H, "<", COL_BTN_BG, COL_BTN_TEXT);
+                if (inputLen > 0) { inputBuf[--inputLen] = '\0'; if (inputLen == 0 && historyCount > 0) moreMode = true; drawInputBar(); }
             }
             return;
         }
