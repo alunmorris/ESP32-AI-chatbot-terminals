@@ -113,18 +113,18 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define KB_ROW3_X    0
 
 // Row 4 special key widths and positions
-// tall BS (26×30) at bottom-left + [Shift 40]+[Alt 40]+[Space 172]+[Hide 42] = 320
+// [Shift 40]+[Alt 40]+[Space 172]+[Hide 42] + tall BS (26×30) at bottom-right = 320
 #define BS_W        26   // ~20% thinner than KEY_W=32
-#define BS_X         0   // bottom left
+#define BS_X       294   // bottom right (SCREEN_W - BS_W)
 #define BS_H        30   // 50% taller than KEY_H=20; drawn from (SCREEN_H - BS_H) upward
 #define SHIFT_W     40
-#define SHIFT_X     26   // = BS_W
+#define SHIFT_X      0
 #define ALT_W       40
-#define ALT_X       66   // SHIFT_X + SHIFT_W
-#define SPACE_W    172   // 320 - BS_W(26) - SHIFT_W(40) - ALT_W(40) - HIDE_W(42)
-#define SPACE_X    106   // ALT_X + ALT_W
+#define ALT_X       40   // SHIFT_X + SHIFT_W
+#define SPACE_W    172   // 320 - SHIFT_W(40) - ALT_W(40) - HIDE_W(42) - BS_W(26)
+#define SPACE_X     80   // ALT_X + ALT_W
 #define HIDE_W      42
-#define HIDE_X     278   // SPACE_X + SPACE_W
+#define HIDE_X     252   // SPACE_X + SPACE_W
 
 // --- Key appearance ---
 #define KEY_RADIUS        3     // rounded corner radius for keys
@@ -214,8 +214,8 @@ void drawKeyboard() {
     }
     drawKey(x, row2Y, KEY_W, KEY_H, altOn ? "\\" : (shiftOn ? "?" : "/"), COL_KEY_FACE, COL_KEY_LABEL);
 
-    // Row 3: ZXCVBNM + , .  (starts at x=BS_W to leave space for tall BS key)
-    x = BS_W;
+    // Row 3: ZXCVBNM + , .
+    x = 0;
     int row3Y = KB_Y + 3 * rowStep;
     for (int i = 0; i < 7; i++) {
         char c = shiftOn ? KB_ROW3[i] : (KB_ROW3[i] + 32);
@@ -569,8 +569,8 @@ String typeKBKey(int sx, int sy) {
             }
             break;
         }
-        case 3: {  // ZXCVBNM + ,.  (shifted: <>  alt: [])  — starts at x=BS_W
-            x = BS_W;
+        case 3: {  // ZXCVBNM + ,.  (shifted: <>  alt: [])
+            x = 0;
             for (int i = 0; i < 7; i++, x += KEY_W) {
                 if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
                     char c = shiftOn ? KB_ROW3[i] : (KB_ROW3[i] + 32);
