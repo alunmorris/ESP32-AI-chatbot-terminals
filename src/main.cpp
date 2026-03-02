@@ -113,17 +113,18 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define KB_ROW3_X    0
 
 // Row 4 special key widths and positions
-// [Shift 40]+[Alt 40]+[Space 158]+[Hide 42]+[8px gap]+[BS 32] = 320
+// tall BS (26×30) at bottom-left + [Shift 40]+[Alt 40]+[Space 172]+[Hide 42] = 320
+#define BS_W        26   // ~20% thinner than KEY_W=32
+#define BS_X         0   // bottom left
+#define BS_H        30   // 50% taller than KEY_H=20; drawn from (SCREEN_H - BS_H) upward
 #define SHIFT_W     40
-#define SHIFT_X      0
+#define SHIFT_X     26   // = BS_W
 #define ALT_W       40
-#define ALT_X       40
-#define SPACE_W    158
-#define SPACE_X     80
+#define ALT_X       66   // SHIFT_X + SHIFT_W
+#define SPACE_W    172   // 320 - BS_W(26) - SHIFT_W(40) - ALT_W(40) - HIDE_W(42)
+#define SPACE_X    106   // ALT_X + ALT_W
 #define HIDE_W      42
-#define HIDE_X     238
-#define BS_W        32   // [⌫] on row 4 right, same width as letter keys
-#define BS_X       288   // flush right edge (SCREEN_W - KEY_W)
+#define HIDE_X     278   // SPACE_X + SPACE_W
 
 // --- Key appearance ---
 #define KEY_RADIUS        3     // rounded corner radius for keys
@@ -213,8 +214,8 @@ void drawKeyboard() {
     }
     drawKey(x, row2Y, KEY_W, KEY_H, altOn ? "\\" : (shiftOn ? "?" : "/"), COL_KEY_FACE, COL_KEY_LABEL);
 
-    // Row 3: ZXCVBNM + , .
-    x = 0;
+    // Row 3: ZXCVBNM + , .  (starts at x=BS_W to leave space for tall BS key)
+    x = BS_W;
     int row3Y = KB_Y + 3 * rowStep;
     for (int i = 0; i < 7; i++) {
         char c = shiftOn ? KB_ROW3[i] : (KB_ROW3[i] + 32);
@@ -225,15 +226,16 @@ void drawKeyboard() {
     drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "[" : (shiftOn ? "<" : ","), COL_KEY_FACE, COL_KEY_LABEL); x += KEY_W;
     drawKey(x, row3Y, KEY_W, KEY_H, altOn ? "]" : (shiftOn ? ">" : "."), COL_KEY_FACE, COL_KEY_LABEL);
 
-    // Row 4: [Shift] [Alt] [Space] [Hide] [BS] — 1px lower, 1px shorter (extra gap above)
+    // Row 4: tall BS at bottom-left + [Shift] [Alt] [Space] [Hide]
     int row4Y = KB_Y + 4 * rowStep + 1;
+    int bsY   = SCREEN_H - BS_H;
     uint16_t shiftFace = shiftOn ? TFT_NAVY : COL_BTN_BG;
     uint16_t altFace   = altOn   ? TFT_NAVY : COL_BTN_BG;
+    drawKey(BS_X,    bsY,   BS_W,    BS_H,      "<-",    COL_BTN_BG, COL_BTN_TEXT);
     drawKey(SHIFT_X, row4Y, SHIFT_W, KEY_H - 1, shiftOn ? "SHF" : "shf", shiftFace, COL_BTN_TEXT);
     drawKey(ALT_X,   row4Y, ALT_W,   KEY_H - 1, altOn   ? "ALT" : "alt", altFace,   COL_BTN_TEXT);
     drawKey(SPACE_X, row4Y, SPACE_W, KEY_H - 1, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
     drawKey(HIDE_X,  row4Y, HIDE_W,  KEY_H - 1, "Hide",  COL_BTN_BG, COL_BTN_TEXT);
-    drawKey(BS_X,    row4Y, BS_W,    KEY_H - 1, "<-",    COL_BTN_BG, COL_BTN_TEXT);
 }
 
 // --- WiFi health ---
@@ -567,8 +569,8 @@ String typeKBKey(int sx, int sy) {
             }
             break;
         }
-        case 3: {  // ZXCVBNM + ,.  (shifted: <>  alt: [])
-            x = 0;
+        case 3: {  // ZXCVBNM + ,.  (shifted: <>  alt: [])  — starts at x=BS_W
+            x = BS_W;
             for (int i = 0; i < 7; i++, x += KEY_W) {
                 if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
                     char c = shiftOn ? KB_ROW3[i] : (KB_ROW3[i] + 32);
@@ -645,19 +647,17 @@ void handleTouch() {
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
 
-    // --- Send / More button ---
-    if (inRect(sx, sy, SCREEN_W - BTN_SEND_W, barY + BTN_INSET, BTN_SEND_W - BTN_INSET*2, barH - BTN_INSET*2)) {
-        sendPrompt();
-        return;
-    }
-
-    // --- Show KB button (only when hidden) ---
-    if (!kbVisible && inRect(sx, sy, SCREEN_W - BTN_SHOWKB_X, barY + BTN_INSET, BTN_SHOWKB_W, barH - BTN_INSET*2)) {
-        kbVisible = true;
-        tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
-        drawHistory();
-        drawInputBar();
-        drawKeyboard();
+    // --- Input bar: Send/More (KB visible) or Show KB (KB hidden) ---
+    if (sy >= barY && sy < barY + barH) {
+        if (kbVisible) {
+            sendPrompt();
+        } else {
+            kbVisible = true;
+            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
+            drawHistory();
+            drawInputBar();
+            drawKeyboard();
+        }
         return;
     }
 
@@ -665,6 +665,20 @@ void handleTouch() {
     if (kbVisible && sy >= KB_Y) {
         int rowStep = KEY_H + KEY_GAP;
         int row4Y   = KB_Y + 4 * rowStep + 1;
+
+        // BS — tall key at bottom left, spans row 3/4 area
+        int bsY = SCREEN_H - BS_H;
+        if (inRect(sx, sy, BS_X, bsY, BS_W, BS_H)) {
+            drawKey(BS_X, bsY, BS_W, BS_H, "<-", TFT_WHITE, COL_BTN_TEXT);
+            delay(KEY_FLASH_MS);
+            drawKey(BS_X, bsY, BS_W, BS_H, "<-", COL_BTN_BG, COL_BTN_TEXT);
+            if (inputLen > 0) {
+                inputBuf[--inputLen] = '\0';
+                if (inputLen == 0 && historyCount > 0) moreMode = true;
+                drawInputBar();
+            }
+            return;
+        }
 
         // Row 4 special keys
         if (sy >= row4Y && sy < row4Y + KEY_H - 1) {
@@ -686,15 +700,6 @@ void handleTouch() {
                 tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
                 drawHistory();
                 drawInputBar();
-            } else if (inRect(sx, sy, BS_X, row4Y, BS_W, KEY_H - 1)) {
-                drawKey(BS_X, row4Y, BS_W, KEY_H - 1, "<-", TFT_WHITE, COL_BTN_TEXT);
-                delay(KEY_FLASH_MS);
-                drawKey(BS_X, row4Y, BS_W, KEY_H - 1, "<-", COL_BTN_BG, COL_BTN_TEXT);
-                if (inputLen > 0) {
-                    inputBuf[--inputLen] = '\0';
-                    if (inputLen == 0 && historyCount > 0) moreMode = true;
-                    drawInputBar();
-                }
             }
             return;
         }
