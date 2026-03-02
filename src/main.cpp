@@ -113,18 +113,19 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define KB_ROW3_X    0
 
 // Row 4 special key widths and positions
-// [Shift 40]+[Alt 40]+[Space 172]+[Hide 42] + tall BS (26×30) at bottom-right = 320
+// [Shift 40]+[Alt 40]+[Space 166]+[Hide 42] + tall BS (26×45) at bottom-right
+// Hide RHS=288 aligns with '.' key RHS; BS starts at 294 (gap of 6px after Hide)
 #define BS_W        26   // ~20% thinner than KEY_W=32
 #define BS_X       294   // bottom right (SCREEN_W - BS_W)
-#define BS_H        30   // 50% taller than KEY_H=20; drawn from (SCREEN_H - BS_H) upward
+#define BS_H        40   // tall delete key; drawn from (SCREEN_H - BS_H) upward
 #define SHIFT_W     40
 #define SHIFT_X      0
 #define ALT_W       40
 #define ALT_X       40   // SHIFT_X + SHIFT_W
-#define SPACE_W    172   // 320 - SHIFT_W(40) - ALT_W(40) - HIDE_W(42) - BS_W(26)
+#define SPACE_W    166   // HIDE_X(246) - SPACE_X(80)
 #define SPACE_X     80   // ALT_X + ALT_W
 #define HIDE_W      42
-#define HIDE_X     252   // SPACE_X + SPACE_W
+#define HIDE_X     246   // SPACE_X + SPACE_W; RHS=288 = '.' key RHS
 
 // --- Key appearance ---
 #define KEY_RADIUS        3     // rounded corner radius for keys
@@ -1177,6 +1178,7 @@ void sendPrompt() {
     prompt[127] = '\0';
     moreMode = false;
     kbVisible = false;   // hide KB; drawHistory() covers the KB area
+    drawInputBar();      // clear full bar now — erases BS/Hide key remnants before API wait
 
     // Show user message and thinking indicator
     addMessage(true, false, prompt);
