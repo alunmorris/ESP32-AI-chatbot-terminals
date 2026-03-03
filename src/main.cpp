@@ -1,4 +1,7 @@
 // CYD AI chatbot for CYD28 (ESP32-2432S028R)
+// 030326 WiFi AP menu bugfixes: disconnect before scan, redraw KB after selectAP
+// 030326 WiFi AP menu: NVS credential store, AP scan/picker, enterPassword, selectAP
+// 020326 KB layout: BS height 40px, Hide aligned to dot key, clear KB remnants on Send
 // 280226 Add Grok API (xAI), key 4 at boot; route callGemini/callGrok via useGrok flag
 // 280226 Bold font: custom DejaVuSansBold 12px (yAdv=15), LINE_H_LARGE=15 SPLASH_H=45
 // 280226 RGB LED WiFi signal strength: blue=strong, cyan, green, orange, red=lost
@@ -30,8 +33,6 @@
 #include <Preferences.h>
 
 // --- Credentials ---
-const char* WIFI_SSID       = "PlusnetWireless_EXT";
-const char* WIFI_PASSWORD   = "WPAkeykey";
 const char* GEMINI_API_KEY  = "GEMINI_KEY_REMOVED";
 const char* GROK_API_KEY    = "GROK_KEY_REMOVED";
 char        GEMINI_MODEL[48]  = "gemini-3.1-pro-preview"; // overwritten at boot
@@ -76,13 +77,6 @@ void loadWifiCreds() {
         strncpy(wifiPass[i], p.getString(pk, "").c_str(), 63); wifiPass[i][63] = '\0';
     }
     p.end();
-    // Seed with hardcoded creds on first boot so user doesn't have to re-enter
-    if (wifiCredsCount == 0) {
-        strncpy(wifiSsid[0], WIFI_SSID, 32);
-        strncpy(wifiPass[0], WIFI_PASSWORD, 63);
-        wifiCredsCount = 1;
-        saveWifiCreds();
-    }
 }
 
 // Insert ssid+pass at slot 0 (most-recently-used). Shift others down. Cap at WIFI_PREFS_MAX.
@@ -995,6 +989,7 @@ bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
 void selectAP() {
     while (true) {  // outer: re-scan loop
         // --- Scan ---
+        WiFi.disconnect(true);  // ensure clean idle state before scan (prev. begin() may leave driver busy)
         tft.fillScreen(COL_BG);
         tft.setTextFont(1); tft.setTextColor(TFT_YELLOW, COL_BG);
         tft.setCursor(0, 0); tft.print("Scanning WiFi...");
@@ -1669,7 +1664,7 @@ void selectModel() {
 }
 
 void setup() {
-    loadWifiCreds();   // load NVS; seeds from WIFI_SSID/WIFI_PASSWORD on first boot
+    loadWifiCreds();   // load NVS; shows AP picker on first boot if no credentials stored
     Serial.begin(115200);
     waitMsgIdx = random(NUM_WAIT_MSGS);
 
@@ -1698,6 +1693,8 @@ void setup() {
     bool wifiOk = connectWiFi(wifiSsid[0], wifiPass[0], true);
     if (!wifiOk) {
         selectAP();  // scan → pick AP → enter password → connect; returns only on success
+        drawKeyboard();   // selectAP() wiped the screen; restore before selectModel()
+        drawInputBar();
     }
 
     // Startup help — drawn directly in history area; cleared on first chat message
