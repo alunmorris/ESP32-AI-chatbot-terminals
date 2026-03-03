@@ -331,6 +331,48 @@ void drawKeyboard() {
     drawKey(HIDE_X,  row4Y, HIDE_W,  KEY_H - 1, "Hide",  COL_BTN_BG, COL_BTN_TEXT);
 }
 
+// --- AP picker screen ---
+#define AP_ROW_H  24   // height of each AP list row
+
+// Convert RSSI to 4-char ASCII signal bar string.
+static const char* rssiToBars(int rssi) {
+    if (rssi >= -55) return "####";
+    if (rssi >= -65) return "###.";
+    if (rssi >= -75) return "##..";
+    if (rssi >= -85) return "#...";
+    return "....";
+}
+
+// Draw full-screen AP list. apCount entries from apSsids[]/apRssi[].
+// Rows numbered 1–apCount starting at y=AP_ROW_H (row 0 = header).
+void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
+    tft.fillScreen(COL_BG);
+    tft.setTextFont(1);
+    tft.setTextSize(1);
+    // Header row
+    tft.setTextColor(TFT_YELLOW, COL_BG);
+    tft.setCursor(2, (AP_ROW_H - 8) / 2);
+    tft.print("Select WiFi network:");
+    // Entry rows
+    for (int i = 0; i < apCount; i++) {
+        int y = AP_ROW_H * (i + 1);
+        tft.fillRect(0, y, SCREEN_W, AP_ROW_H - 1, COL_KEY_FACE);
+        tft.setTextColor(COL_KEY_LABEL, COL_KEY_FACE);
+        int ty = y + (AP_ROW_H - 8) / 2;
+        // Number
+        char num[3]; snprintf(num, sizeof(num), "%d", i + 1);
+        tft.setCursor(2, ty); tft.print(num);
+        // SSID (truncated to 22 chars)
+        char ssidDisp[23] = {0};
+        strncpy(ssidDisp, apSsids[i], 22);
+        tft.setCursor(16, ty); tft.print(ssidDisp);
+        // Signal bars + dBm (right side, fixed position x=220)
+        char sig[12];
+        snprintf(sig, sizeof(sig), "%s %4d", rssiToBars(apRssi[i]), apRssi[i]);
+        tft.setCursor(220, ty); tft.print(sig);
+    }
+}
+
 // --- WiFi health ---
 bool          wifiHealthy     = true;
 unsigned long lastWiFiCheckMs = 0;
