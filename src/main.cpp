@@ -736,6 +736,82 @@ String typeKBKey(int sx, int sy) {
     return typed;
 }
 
+// Show keyboard and let user type a password. Returns typed string in out (64 bytes).
+// Uses the existing keyboard (inputBuf/inputLen/shiftOn/altOn globals).
+// Tap the input bar (Send button area) to submit.
+void enterPassword(const char* ssidPrompt, char* out) {
+    inputBuf[0] = '\0';
+    inputLen    = 0;
+    moreMode    = false;
+    shiftOn     = false;
+    altOn       = false;
+    kbVisible   = true;
+
+    tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
+    tft.setTextFont(1);
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_YELLOW, COL_BG);
+    tft.setCursor(0, 0);  tft.print("Password for:");
+    tft.setTextColor(TFT_WHITE,  COL_BG);
+    tft.setCursor(0, 10); tft.print(ssidPrompt);
+    drawInputBar();
+    drawKeyboard();
+
+    while (true) {
+        if (!ts.touched()) continue;
+        TS_Point pt = ts.getPoint();
+        while (ts.touched()) delay(5);
+        int sx, sy;
+        mapTouch(pt, sx, sy);
+
+        // Input bar tap → submit
+        if (sy >= IBAR_Y_KB_SHOW && sy < IBAR_Y_KB_SHOW + IBAR_H_KB_SHOW) {
+            strncpy(out, inputBuf, 63); out[63] = '\0';
+            inputBuf[0] = '\0'; inputLen = 0;   // clear sensitive data
+            return;
+        }
+
+        // Keyboard area
+        if (sy >= KB_Y) {
+            int bsY = SCREEN_H - BS_H;
+            // BS key
+            if (inRect(sx, sy, BS_X, bsY, BS_W, BS_H)) {
+                drawKey(BS_X, bsY, BS_W, BS_H, "<-", TFT_WHITE, COL_BTN_TEXT);
+                delay(KEY_FLASH_MS);
+                drawKey(BS_X, bsY, BS_W, BS_H, "<-", COL_BTN_BG, COL_BTN_TEXT);
+                if (inputLen > 0) { inputBuf[--inputLen] = '\0'; drawInputBar(); }
+                continue;
+            }
+            // Row 4: Shift, Alt, Space (Hide ignored during password entry)
+            int row4Y = KB_Y + 4 * (KEY_H + KEY_GAP) + 1;
+            if (sy >= row4Y && sy < row4Y + KEY_H - 1) {
+                if (inRect(sx, sy, SHIFT_X, row4Y, SHIFT_W, KEY_H - 1)) {
+                    shiftOn = !shiftOn; altOn = false; drawKeyboard();
+                } else if (inRect(sx, sy, ALT_X, row4Y, ALT_W, KEY_H - 1)) {
+                    altOn = !altOn; shiftOn = false; drawKeyboard();
+                } else if (inRect(sx, sy, SPACE_X, row4Y, SPACE_W, KEY_H - 1)) {
+                    if (inputLen < INPUT_MAX_LEN) {
+                        inputBuf[inputLen++] = ' '; inputBuf[inputLen] = '\0';
+                        drawInputBar();
+                    }
+                }
+                continue;
+            }
+            // Character keys
+            String typed = typeKBKey(sx, sy);
+            if (typed.length() > 0) {
+                int addLen = typed.length();
+                if (inputLen + addLen <= INPUT_MAX_LEN) {
+                    memcpy(inputBuf + inputLen, typed.c_str(), addLen);
+                    inputLen += addLen;
+                    inputBuf[inputLen] = '\0';
+                    drawInputBar();
+                }
+            }
+        }
+    }
+}
+
 void sendPrompt();  // forward declaration — defined after callGemini()
 
 void handleTouch() {
@@ -912,6 +988,123 @@ bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
     if (showSplash) tft.fillRect(0, 0, SCREEN_W, SPLASH_H, COL_BG);
     updateLedWifi();
     return WiFi.status() == WL_CONNECTED;
+}
+
+// Scan WiFi, let user pick an AP, handle password entry, connect.
+// Loops until connected. Call from setup() when connectWiFi() returns false.
+void selectAP() {
+    while (true) {  // outer: re-scan loop
+        // --- Scan ---
+        tft.fillScreen(COL_BG);
+        tft.setTextFont(1); tft.setTextColor(TFT_YELLOW, COL_BG);
+        tft.setCursor(0, 0); tft.print("Scanning WiFi...");
+
+        int n = WiFi.scanNetworks();
+
+        if (n <= 0) {
+            tft.fillScreen(COL_BG);
+            tft.setCursor(0, 0); tft.print("No networks found. Tap to retry.");
+            while (!ts.touched()) delay(50);
+            while (ts.touched()) delay(5);
+            continue;
+        }
+
+        // Sort indices by RSSI descending, keep top 9
+        int indices[20];
+        int total = (n < 20) ? n : 20;
+        for (int i = 0; i < total; i++) indices[i] = i;
+        for (int i = 0; i < total - 1; i++) {
+            for (int j = i + 1; j < total; j++) {
+                if (WiFi.RSSI(indices[j]) > WiFi.RSSI(indices[i])) {
+                    int tmp = indices[i]; indices[i] = indices[j]; indices[j] = tmp;
+                }
+            }
+        }
+        int apCount = (total < 9) ? total : 9;
+
+        char apSsids[9][33];
+        int  apRssi[9];
+        for (int i = 0; i < apCount; i++) {
+            strncpy(apSsids[i], WiFi.SSID(indices[i]).c_str(), 32);
+            apSsids[i][32] = '\0';
+            apRssi[i] = WiFi.RSSI(indices[i]);
+        }
+        WiFi.scanDelete();
+
+        drawAPList(apSsids, apRssi, apCount);
+
+        // --- Wait for AP selection ---
+        int selected = -1;
+        while (selected < 0) {
+            if (!ts.touched()) continue;
+            TS_Point pt = ts.getPoint();
+            while (ts.touched()) delay(5);
+            int sx, sy;
+            mapTouch(pt, sx, sy);
+            for (int i = 0; i < apCount; i++) {
+                int rowY = AP_ROW_H * (i + 1);
+                if (sy >= rowY && sy < rowY + AP_ROW_H) { selected = i; break; }
+            }
+        }
+
+        char selSsid[33];
+        strncpy(selSsid, apSsids[selected], 32); selSsid[32] = '\0';
+
+        // --- Password + connect loop for this AP ---
+        while (true) {
+            char pass[64] = {0};
+            bool hasStored = findWifiPass(selSsid, pass);
+
+            if (!hasStored) {
+                enterPassword(selSsid, pass);
+            }
+
+            // Show connecting
+            tft.fillScreen(COL_BG);
+            tft.setTextFont(1); tft.setTextColor(TFT_BLUE, COL_BG);
+            char msg[80]; snprintf(msg, sizeof(msg), "Connecting: %.55s...", selSsid);
+            tft.setCursor(0, 0); tft.print(msg);
+
+            bool ok = connectWiFi(selSsid, pass);
+
+            if (ok) {
+                insertWifiCred(selSsid, pass);
+                return;  // connected — setup() continues to selectModel()
+            }
+
+            // --- Failed: offer re-enter or new scan ---
+            tft.fillScreen(COL_BG);
+            tft.setTextFont(1);
+            tft.setTextColor(TFT_RED, COL_BG);
+            char failMsg[64]; snprintf(failMsg, sizeof(failMsg), "Failed: %.40s", selSsid);
+            tft.setCursor(2, (AP_ROW_H - 8) / 2); tft.print(failMsg);
+
+            // Draw two option rows (same style as AP list)
+            static const char* opts[] = { "1  Re-enter password", "2  New scan" };
+            for (int i = 0; i < 2; i++) {
+                int y = AP_ROW_H * (i + 1);
+                tft.fillRect(0, y, SCREEN_W, AP_ROW_H - 1, COL_KEY_FACE);
+                tft.setTextColor(COL_KEY_LABEL, COL_KEY_FACE);
+                tft.setCursor(2, y + (AP_ROW_H - 8) / 2);
+                tft.print(opts[i]);
+            }
+
+            // Wait for tap on row 1 or 2
+            int choice = 0;
+            while (choice == 0) {
+                if (!ts.touched()) continue;
+                TS_Point pt = ts.getPoint();
+                while (ts.touched()) delay(5);
+                int sx, sy; mapTouch(pt, sx, sy);
+                if (sy >= AP_ROW_H && sy < AP_ROW_H * 2) choice = 1;  // re-enter
+                if (sy >= AP_ROW_H * 2 && sy < AP_ROW_H * 3) choice = 2;  // new scan
+            }
+
+            if (choice == 2) break;  // break inner loop → outer re-scan loop
+            // choice == 1: clear stored pass, loop inner (enterPassword runs next iteration)
+            clearWifiPass(selSsid);
+        }
+    }
 }
 
 // --- Waiting messages (shown after 4s, rotate every 4s) ---
@@ -1504,7 +1697,7 @@ void setup() {
     drawInputBar();
     bool wifiOk = connectWiFi(wifiSsid[0], wifiPass[0], true);
     if (!wifiOk) {
-        addMessage(false, true, "WiFi connect failed");
+        selectAP();  // scan → pick AP → enter password → connect; returns only on success
     }
 
     // Startup help — drawn directly in history area; cleared on first chat message
