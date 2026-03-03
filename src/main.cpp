@@ -1,4 +1,7 @@
 // CYD AI chatbot for CYD28 (ESP32-2432S028R)
+// 030326 Touch calibration: key C at boot, 2-point crosshair, saved to NVS
+// 030326 Transliterate accented chars (Latin-1, Latin Extended-A) to ASCII in addMessage
+// 030326 Add Groq API (api.groq.com), model qwen/qwen3-32b, key 5 at boot
 // 030326 WiFi AP menu bugfixes: disconnect before scan, redraw KB after selectAP
 // 030326 WiFi AP menu: NVS credential store, AP scan/picker, enterPassword, selectAP
 // 020326 KB layout: BS height 40px, Hide aligned to dot key, clear KB remnants on Send
@@ -35,9 +38,11 @@
 // --- Credentials ---
 const char* GEMINI_API_KEY  = "GEMINI_KEY_REMOVED";
 const char* GROK_API_KEY    = "GROK_KEY_REMOVED";
+const char* GROQ_API_KEY    = "GROQ_KEY_REMOVED";
 char        GEMINI_MODEL[48]  = "gemini-3.1-pro-preview"; // overwritten at boot
 bool        geminiUseGlobal   = false;  // true → /locations/global/ in path
-bool        useGrok           = false;  // true → route to Grok API instead of Gemini
+bool        useGrok           = false;  // true → route to Grok (xAI) instead of Gemini
+bool        useGroq           = false;  // true → route to Groq instead of Gemini
 bool        largeFont         = false;  // true → DejaVuSansBold12px in history area
 bool        invertDisplay     = false;  // true → light grey bg, black text in history area
 #define COL_INVERT_BG   0xC618          // light grey (~RGB 192,192,192)
@@ -49,6 +54,43 @@ bool        invertDisplay     = false;  // true → light grey bg, black text in
 static char wifiSsid[WIFI_PREFS_MAX][33];  // SSID max 32 chars + null
 static char wifiPass[WIFI_PREFS_MAX][64];  // WPA2 password max 63 chars + null
 static int  wifiCredsCount = 0;
+
+// --- Touch calibration (NVS, namespace "touch") ---
+// ts.setRotation(3) handles the 180° axis inversion for ROTATE_180, so cal defaults are the same.
+static int calXmin = 200, calXmax = 3900;
+static int calYmin = 200, calYmax = 3900;
+
+// Calibration is tagged with the ts rotation used so mismatched calibrations are ignored.
+// ROTATE_180 uses ts rotation 3; normal uses ts rotation 1.
+#ifdef ROTATE_180
+  #define CAL_ORIENT 3
+#else
+  #define CAL_ORIENT 0
+#endif
+
+void loadTouchCal() {
+    Preferences p;
+    p.begin("touch", true);
+    if (p.getBool("valid", false) && p.getInt("orient", -1) == CAL_ORIENT) {
+        calXmin = p.getInt("xmin", calXmin);
+        calXmax = p.getInt("xmax", calXmax);
+        calYmin = p.getInt("ymin", calYmin);
+        calYmax = p.getInt("ymax", calYmax);
+    }
+    p.end();
+}
+
+void saveTouchCal() {
+    Preferences p;
+    p.begin("touch", false);
+    p.putInt("xmin", calXmin);
+    p.putInt("xmax", calXmax);
+    p.putInt("ymin", calYmin);
+    p.putInt("ymax", calYmax);
+    p.putInt("orient", CAL_ORIENT);
+    p.putBool("valid", true);
+    p.end();
+}
 
 void saveWifiCreds() {
     Preferences p;
@@ -145,6 +187,7 @@ void clearWifiPass(const char* ssid) {
 // --- Screen dimensions ---
 #define SCREEN_W        320
 #define SCREEN_H        240
+//#define ROTATE_180          // uncomment to rotate display 180° (USB on left)
 
 // --- Layout (KB shown) ---
 #define HIST_Y_TOP      0
@@ -251,6 +294,8 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define GEMINI_HOST       "generativelanguage.googleapis.com"
 #define GROK_HOST         "eu-west-1.api.x.ai"
 #define GROK_MODEL        "grok-4-1-fast-reasoning"
+#define GROQ_HOST         "api.groq.com"
+#define GROQ_MODEL        "openai/gpt-oss-120b"
 
 void drawKey(int x, int y, int w, int h, const char* label, uint16_t face, uint16_t text) {
     tft.fillRoundRect(x, y, w - 1, h, KEY_RADIUS, face);
@@ -584,7 +629,8 @@ void addMessage(bool isUser, bool isError, const char* text) {
                 continue;
             }
             // Identify replacement string for common UTF-8 sequences
-            const char* rep = "?";
+            char repBuf[2] = {'?', 0};
+            const char* rep = repBuf;
             unsigned char b2 = (unsigned char)s[1];
             unsigned char b3 = (unsigned char)s[2];
             if (c == 0xC2) {
@@ -597,7 +643,42 @@ void addMessage(bool isUser, bool isError, const char* text) {
                 else if (b2 == 0xB5) rep = "mu";       // µ
                 else if (b2 == 0xB1) rep = "+/-";      // ±
             } else if (c == 0xC3) {
-                if (b2 == 0xB7)      rep = "/";        // ÷
+                // Latin-1 Supplement → ASCII equivalents
+                if      (b2 == 0x86)                rep = "AE"; // Æ
+                else if (b2 == 0xA6)                rep = "ae"; // æ
+                else if (b2 == 0x9F)                rep = "ss"; // ß
+                else if (b2 == 0x9E)                rep = "Th"; // Þ
+                else if (b2 == 0xBE)                rep = "th"; // þ
+                else if (b2 == 0xB7)                rep = "/";  // ÷
+                else if (b2 == 0x97)                rep = "x";  // ×
+                else if (b2 >= 0x80 && b2 <= 0x85) rep = "A";  // À-Å
+                else if (b2 == 0x87)                rep = "C";  // Ç
+                else if (b2 >= 0x88 && b2 <= 0x8B) rep = "E";  // È-Ë
+                else if (b2 >= 0x8C && b2 <= 0x8F) rep = "I";  // Ì-Ï
+                else if (b2 == 0x90)                rep = "D";  // Ð
+                else if (b2 == 0x91)                rep = "N";  // Ñ
+                else if (b2 >= 0x92 && b2 <= 0x96) rep = "O";  // Ò-Ö
+                else if (b2 == 0x98)                rep = "O";  // Ø
+                else if (b2 >= 0x99 && b2 <= 0x9C) rep = "U";  // Ù-Ü
+                else if (b2 == 0x9D)                rep = "Y";  // Ý
+                else if (b2 >= 0xA0 && b2 <= 0xA5) rep = "a";  // à-å
+                else if (b2 == 0xA7)                rep = "c";  // ç
+                else if (b2 >= 0xA8 && b2 <= 0xAB) rep = "e";  // è-ë
+                else if (b2 >= 0xAC && b2 <= 0xAF) rep = "i";  // ì-ï
+                else if (b2 == 0xB0)                rep = "d";  // ð
+                else if (b2 == 0xB1)                rep = "n";  // ñ
+                else if (b2 >= 0xB2 && b2 <= 0xB6) rep = "o";  // ò-ö
+                else if (b2 == 0xB8)                rep = "o";  // ø
+                else if (b2 >= 0xB9 && b2 <= 0xBC) rep = "u";  // ù-ü
+                else if (b2 == 0xBD || b2 == 0xBF) rep = "y";  // ý ÿ
+            } else if (c == 0xC4 || c == 0xC5) {
+                // Latin Extended-A (U+0100-U+017F) → base ASCII letter
+                // 128-entry table indexed by (block_offset*64 + b2-0x80)
+                static const char tbl[] =
+                    "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiIiJjKkkLlLlLlL"
+                    "lLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs";
+                int idx = (c == 0xC5 ? 64 : 0) + (b2 - 0x80);
+                if (b2 >= 0x80 && idx < 128) { repBuf[0] = tbl[idx]; rep = repBuf; }
             } else if (c == 0xCE) {
                 if (b2 == 0xA9)      rep = "omega";    // Ω
             } else if (c == 0xCF) {
@@ -606,6 +687,7 @@ void addMessage(bool isUser, bool isError, const char* text) {
                 if (b2 == 0x80) {
                     if      (b3 == 0x98 || b3 == 0x99) rep = "'";   // curly single quotes
                     else if (b3 == 0x9C || b3 == 0x9D) rep = "\"";  // curly double quotes
+                    else if (b3 == 0x91)                rep = "-";   // non-breaking hyphen
                     else if (b3 == 0x93 || b3 == 0x94) rep = "-";   // en/em dash
                     else if (b3 == 0xA6)                rep = "..."; // ellipsis
                     else if (b3 == 0xA2)                rep = "-";   // bullet
@@ -630,8 +712,8 @@ void addMessage(bool isUser, bool isError, const char* text) {
 // --- Touch coordinate mapping ---
 // Raw XPT2046 range ~200–3900 → screen pixels
 void mapTouch(TS_Point& tp, int& sx, int& sy) {
-    sx = map(tp.x, 200, 3900, 0, SCREEN_W - 1);
-    sy = map(tp.y, 200, 3900, 0, SCREEN_H - 1);
+    sx = map(tp.x, calXmin, calXmax, 0, SCREEN_W - 1);
+    sy = map(tp.y, calYmin, calYmax, 0, SCREEN_H - 1);
 }
 
 // --- Debounce ---
@@ -852,9 +934,9 @@ void handleTouch() {
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
 
-    // --- Input bar: Send/More (KB visible) or Show KB (KB hidden) ---
+    // --- Input bar: Send/More button or Show KB (KB hidden) ---
     if (sy >= barY && sy < barY + barH) {
-        if (kbVisible) {
+        if (kbVisible || sx >= SCREEN_W - BTN_SEND_W) {
             sendPrompt();
         } else {
             kbVisible = true;
@@ -1474,6 +1556,115 @@ String callGrok(const char* prompt) {
     return "ERR: no text in response";
 }
 
+String callGroq(const char* prompt) {
+    // Groq: OpenAI-compatible /openai/v1/chat/completions
+    JsonDocument reqDoc;
+    reqDoc["model"]  = GROQ_MODEL;
+    reqDoc["stream"] = false;
+
+    JsonArray messages = reqDoc["messages"].to<JsonArray>();
+
+    // System prompt
+    JsonObject sysMsgObj = messages.add<JsonObject>();
+    sysMsgObj["role"]    = "system";
+    sysMsgObj["content"] = "Respond in 150 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind.";
+
+    // Conversation history (exclude last entry — current prompt)
+    for (int i = 0; i < historyCount - 1; i++) {
+        JsonObject msg  = messages.add<JsonObject>();
+        msg["role"]     = history[i].isUser ? "user" : "assistant";
+        msg["content"]  = history[i].text;
+    }
+
+    // Current prompt
+    JsonObject curMsg  = messages.add<JsonObject>();
+    curMsg["role"]     = "user";
+    curMsg["content"]  = prompt;
+
+    String body;
+    serializeJson(reqDoc, body);
+
+    if (WiFi.status() != WL_CONNECTED) {
+        connectWiFi(wifiSsid[0], wifiPass[0]);
+        if (WiFi.status() != WL_CONNECTED) return "ERR: WiFi not connected";
+    }
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setTimeout(API_TIMEOUT_MS / 1000);
+
+    if (!client.connect(GROQ_HOST, HTTPS_PORT)) {
+        return "ERR: connect failed (check WiFi/DNS)";
+    }
+
+    client.printf(
+        "POST /openai/v1/chat/completions HTTP/1.0\r\n"
+        "Host: " GROQ_HOST "\r\n"
+        "Content-Type: application/json\r\n"
+        "Authorization: Bearer %s\r\n"
+        "Content-Length: %d\r\n\r\n",
+        GROQ_API_KEY, (int)body.length());
+    client.print(body);
+
+    String fullResp = "";
+    unsigned long deadline  = millis() + API_TIMEOUT_MS;
+    unsigned long nextMsgMs = millis() + API_WAIT_FIRST_MS;
+    while (millis() < deadline) {
+        while (client.available()) {
+            fullResp += (char)client.read();
+        }
+        if (!client.connected() && !client.available()) break;
+        if (millis() >= nextMsgMs) {
+            showWaiting(WAIT_MSGS[waitMsgIdx]);
+            waitMsgIdx = (waitMsgIdx + 1) % NUM_WAIT_MSGS;
+            nextMsgMs += 6000;
+        }
+        pollKBHide();
+        delay(10);
+    }
+    client.stop();
+    Serial.printf("[Groq] response len=%d\n", fullResp.length());
+
+    if (fullResp.length() == 0) return "ERR: empty response";
+
+    // Parse HTTP status
+    int httpStatus = 200;
+    if (fullResp.startsWith("HTTP/")) {
+        int sp = fullResp.indexOf(' ');
+        if (sp > 0) httpStatus = fullResp.substring(sp + 1, sp + 4).toInt();
+    }
+
+    int jsonStart = fullResp.indexOf('{');
+    if (jsonStart < 0) return "ERR: no JSON in response";
+    String respBody = fullResp.substring(jsonStart);
+    Serial.println("[Groq] JSON body: " + respBody.substring(0, 400));
+
+    if (httpStatus != 200) {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "ERR: HTTP %d (see serial)", httpStatus);
+        return String(buf);
+    }
+
+    JsonDocument respDoc;
+    if (deserializeJson(respDoc, respBody) != DeserializationError::Ok) {
+        Serial.println("Bad JSON: " + respBody.substring(0, 200));
+        return "ERR: JSON parse failed";
+    }
+
+    const char* errMsg = respDoc["error"]["message"];
+    if (errMsg) {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "ERR: %.72s", errMsg);
+        return String(buf);
+    }
+
+    // OpenAI-compatible: choices[0].message.content
+    const char* text = respDoc["choices"][0]["message"]["content"];
+    if (text) return String(text);
+
+    return "ERR: no text in response";
+}
+
 // --- Send flow ---
 void showThinking() {
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
@@ -1505,7 +1696,7 @@ void sendPrompt() {
     showThinking();
 
     // Call API
-    String response = useGrok ? callGrok(prompt) : callGemini(prompt);
+    String response = useGroq ? callGroq(prompt) : (useGrok ? callGrok(prompt) : callGemini(prompt));
 
     if (response.startsWith("ERR:")) {
         addMessage(false, true, response.c_str());
@@ -1518,21 +1709,87 @@ void sendPrompt() {
     drawInputBar();
 }
 
+void drawCrosshair(int x, int y) {
+    tft.drawLine(x - 18, y, x + 18, y, TFT_WHITE);
+    tft.drawLine(x, y - 18, x, y + 18, TFT_WHITE);
+    tft.drawCircle(x, y, 6, TFT_WHITE);
+}
+
+void calibrateTouch() {
+    const int T1X = 20,           T1Y = 20;
+    const int T2X = SCREEN_W - 20, T2Y = SCREEN_H - 20;
+
+    tft.fillScreen(COL_BG);
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_WHITE, COL_BG);
+
+    // Flush any spurious touches
+    while (ts.touched()) delay(5);
+    delay(200);
+
+    // --- Point 1: top-left ---
+    drawCrosshair(T1X, T1Y);
+    tft.setCursor(60, 110); tft.print("Tap the crosshair");
+
+    while (!ts.touched()) delay(5);
+    long sumX = 0, sumY = 0; int n = 0;
+    while (ts.touched()) {
+        TS_Point p = ts.getPoint();
+        sumX += p.x; sumY += p.y; n++;
+        delay(5);
+    }
+    int rx1 = sumX / n, ry1 = sumY / n;
+
+    // --- Point 2: bottom-right ---
+    tft.fillScreen(COL_BG);
+    drawCrosshair(T2X, T2Y);
+    tft.setCursor(60, 110); tft.print("Tap the crosshair");
+
+    delay(300);
+    while (!ts.touched()) delay(5);
+    sumX = 0; sumY = 0; n = 0;
+    while (ts.touched()) {
+        TS_Point p = ts.getPoint();
+        sumX += p.x; sumY += p.y; n++;
+        delay(5);
+    }
+    int rx2 = sumX / n, ry2 = sumY / n;
+
+    // Extrapolate raw values to screen edges (0 and SCREEN_W/H - 1)
+    long dRx = rx2 - rx1, dTx = T2X - T1X;
+    long dRy = ry2 - ry1, dTy = T2Y - T1Y;
+    calXmin = (int)(rx1 - dRx * T1X / dTx);
+    calXmax = (int)(rx2 + dRx * (SCREEN_W - 1 - T2X) / dTx);
+    calYmin = (int)(ry1 - dRy * T1Y / dTy);
+    calYmax = (int)(ry2 + dRy * (SCREEN_H - 1 - T2Y) / dTy);
+
+    saveTouchCal();
+    Serial.printf("[Cal] xmin=%d xmax=%d ymin=%d ymax=%d\n", calXmin, calXmax, calYmin, calYmax);
+
+    tft.fillScreen(COL_BG);
+    tft.setTextColor(TFT_GREEN, COL_BG);
+    tft.setCursor(60, 110); tft.print("Calibration saved!");
+    delay(1500);
+}
+
 void showModelChoices() {
     tft.setTextSize(1);
     tft.setTextColor(TFT_WHITE, COL_BG);
     tft.setCursor(0, 30); tft.print("Hit 1 for Gemini 2.5 Flash");
     tft.setCursor(0, 40); tft.print("    2 for Gemini 3 Flash");
-    tft.setCursor(0, 50); tft.print("    3 for Gemini 3 Pro");
+    tft.setCursor(0, 50); tft.print("    3 for Gemini 3.1 Pro");
     tft.setCursor(0, 60); tft.print("    4 for Grok 4.1 Fast Reasoning");
-    int nextY = 70;
+    tft.setCursor(0, 70); tft.print("    5 for Groq GPT-OSS-120b");
+    int nextY = 80;
     if (!largeFont) {
         tft.setCursor(0, nextY); tft.print("    b for bigger font");
         nextY += 10;
     }
     if (!invertDisplay) {
         tft.setCursor(0, nextY); tft.print("    i  to invert colours");
+        nextY += 10;
     }
+    tft.setCursor(0, nextY); tft.print("    c  to calibrate touch");
 }
 
 void selectModel() {
@@ -1564,6 +1821,7 @@ void selectModel() {
                 GEMINI_MODEL[47] = '\0';
                 geminiUseGlobal  = modelGlobal[i];
                 useGrok          = false;
+                useGroq          = false;
                 uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
                 tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
                 if (largeFont) {
@@ -1593,6 +1851,7 @@ void selectModel() {
             delay(KEY_FLASH_MS);
             drawKey(x4, KB_Y, KEY_W, KEY_H, "4", COL_KEY_FACE, COL_KEY_LABEL);
             useGrok = true;
+            useGroq = false;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
             if (largeFont) {
@@ -1608,6 +1867,35 @@ void selectModel() {
                 tft.setTextColor(TFT_GREEN, bg);
                 tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
                 tft.setCursor(0, 10); tft.print("Model: Grok 4.1 Fast");
+                tft.setTextColor(TFT_DARKGREY, bg);
+                tft.setCursor(0, 20); tft.print("Ready.");
+            }
+            return;
+        }
+
+        // Key 5 — Groq GPT-OSS-120b
+        int x5 = 4 * KEY_W;
+        if (inRect(sx, sy, x5, KB_Y, KEY_W, KEY_H)) {
+            drawKey(x5, KB_Y, KEY_W, KEY_H, "5", TFT_WHITE, COL_BG);
+            delay(KEY_FLASH_MS);
+            drawKey(x5, KB_Y, KEY_W, KEY_H, "5", COL_KEY_FACE, COL_KEY_LABEL);
+            useGroq = true;
+            useGrok = false;
+            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+            tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
+            if (largeFont) {
+                tft.setFreeFont(&DejaVuSansBold12px);
+                tft.setTextColor(TFT_GREEN, bg);
+                tft.drawString("CYD AI chatbot", 0, 0);
+                tft.drawString("Groq GPT-OSS-120b", 0, LINE_H_LARGE);
+                tft.setTextColor(TFT_DARKGREY, bg);
+                tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
+                tft.setTextFont(1);
+            } else {
+                tft.setTextSize(1);
+                tft.setTextColor(TFT_GREEN, bg);
+                tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
+                tft.setCursor(0, 10); tft.print("Model: Groq GPT-OSS-120b");
                 tft.setTextColor(TFT_DARKGREY, bg);
                 tft.setCursor(0, 20); tft.print("Ready.");
             }
@@ -1660,17 +1948,58 @@ void selectModel() {
                 showModelChoices();
             }
         }
+
+        // Key C (ZXCVBNM row, index 2) — touch calibration
+        {
+            int rowStep = KEY_H + KEY_GAP;
+            int row3Y   = KB_Y + 3 * rowStep;
+            int xc      = 2 * KEY_W;
+            if (inRect(sx, sy, xc, row3Y, KEY_W, KEY_H)) {
+                drawKey(xc, row3Y, KEY_W, KEY_H, "C", TFT_WHITE, COL_BG);
+                delay(KEY_FLASH_MS);
+                drawKey(xc, row3Y, KEY_W, KEY_H, "c", COL_KEY_FACE, COL_KEY_LABEL);
+                calibrateTouch();
+                tft.fillScreen(COL_BG);
+                tft.setTextSize(1);
+                tft.setTextColor(TFT_DARKGREY, COL_BG);
+                tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
+                tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
+                drawKeyboard();
+                drawInputBar();
+                showModelChoices();
+            }
+        }
     }
 }
 
 void setup() {
     loadWifiCreds();   // load NVS; shows AP picker on first boot if no credentials stored
+    loadTouchCal();    // load saved touch calibration from NVS (or keep defaults)
+
+    // Hold BOOT button (GPIO0) on power-on to wipe touch calibration back to defaults
+    pinMode(0, INPUT_PULLUP);
+    if (digitalRead(0) == LOW) {
+        Preferences p;
+        p.begin("touch", false);
+        p.remove("valid");
+        p.remove("orient");
+        p.end();
+        calXmin = 200; calXmax = 3900; calYmin = 200; calYmax = 3900;
+        Serial.begin(115200);
+        Serial.println("[Cal] Reset to defaults via BOOT button");
+        delay(500);
+    }
     Serial.begin(115200);
+    Serial.printf("[Cal] xmin=%d xmax=%d ymin=%d ymax=%d\n", calXmin, calXmax, calYmin, calYmax);
     waitMsgIdx = random(NUM_WAIT_MSGS);
 
     // Display (init before backlight to avoid white flash)
     tft.init();
+#ifdef ROTATE_180
+    tft.setRotation(3);
+#else
     tft.setRotation(1);
+#endif
     tft.fillScreen(COL_BG);
 
     // Backlight on after screen is ready
@@ -1680,7 +2009,11 @@ void setup() {
     // Touch
     touchSPI.begin(TOUCH_SCLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS_PIN);
     ts.begin(touchSPI);
-    ts.setRotation(1);
+#ifdef ROTATE_180
+    ts.setRotation(3);  // 180°: xraw = 4095-x, yraw = 4095-y; keeps same cal defaults (200/3900)
+#else
+    ts.setRotation(1);  // landscape USB-right: xraw = x, yraw = y
+#endif
 
     // Drain spurious startup touch
     unsigned long t0 = millis();
