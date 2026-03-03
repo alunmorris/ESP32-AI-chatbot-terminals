@@ -91,8 +91,8 @@ void insertWifiCred(const char* ssid, const char* pass) {
     for (int i = 0; i < wifiCredsCount; i++) {
         if (strcmp(wifiSsid[i], ssid) == 0) {
             for (int j = i; j < wifiCredsCount - 1; j++) {
-                strncpy(wifiSsid[j], wifiSsid[j+1], 32);
-                strncpy(wifiPass[j], wifiPass[j+1], 63);
+                strncpy(wifiSsid[j], wifiSsid[j+1], 32); wifiSsid[j][32] = '\0';
+                strncpy(wifiPass[j], wifiPass[j+1], 63); wifiPass[j][63] = '\0';
             }
             wifiCredsCount--;
             break;
@@ -101,8 +101,8 @@ void insertWifiCred(const char* ssid, const char* pass) {
     int newCount = wifiCredsCount + 1;
     if (newCount > WIFI_PREFS_MAX) newCount = WIFI_PREFS_MAX;
     for (int i = newCount - 1; i > 0; i--) {
-        strncpy(wifiSsid[i], wifiSsid[i-1], 32);
-        strncpy(wifiPass[i], wifiPass[i-1], 63);
+        strncpy(wifiSsid[i], wifiSsid[i-1], 32); wifiSsid[i][32] = '\0';
+        strncpy(wifiPass[i], wifiPass[i-1], 63); wifiPass[i][63] = '\0';
     }
     strncpy(wifiSsid[0], ssid, 32); wifiSsid[0][32] = '\0';
     strncpy(wifiPass[0], pass, 63); wifiPass[0][63] = '\0';
@@ -1010,8 +1010,8 @@ void selectAP() {
         }
 
         // Sort indices by RSSI descending, keep top 9
-        int indices[20];
-        int total = (n < 20) ? n : 20;
+        int indices[40];
+        int total = (n < 40) ? n : 40;
         for (int i = 0; i < total; i++) indices[i] = i;
         for (int i = 0; i < total - 1; i++) {
             for (int j = i + 1; j < total; j++) {
