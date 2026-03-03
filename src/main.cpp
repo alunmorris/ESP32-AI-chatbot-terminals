@@ -790,7 +790,7 @@ void enterPassword(const char* ssidPrompt, char* out) {
                 } else if (inRect(sx, sy, ALT_X, row4Y, ALT_W, KEY_H - 1)) {
                     altOn = !altOn; shiftOn = false; drawKeyboard();
                 } else if (inRect(sx, sy, SPACE_X, row4Y, SPACE_W, KEY_H - 1)) {
-                    if (inputLen < INPUT_MAX_LEN) {
+                    if (inputLen < 63) {
                         inputBuf[inputLen++] = ' '; inputBuf[inputLen] = '\0';
                         drawInputBar();
                     }
@@ -801,7 +801,7 @@ void enterPassword(const char* ssidPrompt, char* out) {
             String typed = typeKBKey(sx, sy);
             if (typed.length() > 0) {
                 int addLen = typed.length();
-                if (inputLen + addLen <= INPUT_MAX_LEN) {
+                if (inputLen + addLen <= 63) {
                     memcpy(inputBuf + inputLen, typed.c_str(), addLen);
                     inputLen += addLen;
                     inputBuf[inputLen] = '\0';
