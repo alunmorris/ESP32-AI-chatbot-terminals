@@ -26,8 +26,8 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
-#include "fonts/DejaVuSansBold12px.h"  // custom 12px bold, yAdvance=15
-#include "fonts/DejaVuSansBold8px.h"   // custom 8px bold, yAdvance=10
+#include "fonts/DejaVuSansBold12px.h"  // VLW smooth font 12px (Unicode)
+#include "fonts/DejaVuSansBold8px.h"   // VLW smooth font 8px (Unicode)
 #include "images/splash.h"             // SLUG splash 320x117 RGB565
 #include "images/slugsmall.h"          // SLUGsmall 144x96 RGB565 with transparency
 #include <XPT2046_Touchscreen.h>
@@ -297,14 +297,18 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define GROQ_HOST         "api.groq.com"
 #define GROQ_MODEL        "openai/gpt-oss-120b"
 
+// Load/unload the 12px bold smooth font. Always call fontOff() after fontOn().
+void fontOn()  { tft.loadFont(DejaVuSansBold12pxData); }
+void fontOff() { tft.unloadFont(); }
+
 void drawKey(int x, int y, int w, int h, const char* label, uint16_t face, uint16_t text) {
     tft.fillRoundRect(x, y, w - 1, h, KEY_RADIUS, face);
     tft.setTextColor(text, face);
-    tft.setFreeFont(&DejaVuSansBold12px);
+    fontOn();
     int tx = x + (w - (int)tft.textWidth(label)) / 2;
     int ty = y + (h - 15) / 2 + 1;   // 15 = yAdvance; +1 lowers text slightly
     tft.drawString(label, tx, ty);
-    tft.setTextFont(1);           // restore GLCD for everything else
+    fontOff();           // restore GLCD for everything else
 }
 
 void drawKeyboard() {
@@ -386,7 +390,7 @@ static const char* rssiToBars(int rssi) {
 // Rows numbered 1–apCount starting at y=AP_ROW_H (row 0 = header).
 void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
     tft.fillScreen(COL_BG);
-    tft.setTextFont(1);
+    fontOff();
     tft.setTextSize(1);
     // Header row
     tft.setTextColor(TFT_YELLOW, COL_BG);
@@ -486,7 +490,7 @@ void rebuildLines() {
 
         if (largeFont) {
             // Pixel-width word wrap for DejaVuSansBold12px
-            tft.setFreeFont(&DejaVuSansBold12px);
+            fontOn();
             char lineBuf[128] = "";
             const char* p = full;
             while (*p && lineCount < MAX_LINES - 1) {
@@ -535,7 +539,7 @@ void rebuildLines() {
                 lines[lineCount][127] = '\0';
                 lineColor[lineCount++] = col;
             }
-            tft.setTextFont(1);
+            fontOff();
         } else {
             // Pixel-width word wrap for DejaVuSansBold8px
             tft.loadFont(DejaVuSansBold8pxData);
@@ -600,18 +604,17 @@ void drawHistory() {
     int firstIdx = lineCount - maxVis - scrollOffset;
     if (firstIdx < 0) firstIdx = 0;
 
-    if (largeFont) tft.setFreeFont(&DejaVuSansBold12px); else tft.setTextSize(1);
+    if (largeFont) fontOn(); else tft.loadFont(DejaVuSansBold8pxData);
     tft.setTextWrap(false);  // prevent overflow wrapping onto adjacent lines
     for (int i = 0; i < maxVis && (firstIdx + i) < lineCount; i++) {
         int idx = firstIdx + i;
         uint16_t col = lineColor[idx];
         if (invertDisplay) col = TFT_BLACK;
         tft.setTextColor(col, bg);
-        if (largeFont) tft.drawString(lines[idx], 0, i * lineH);
-        else { tft.setCursor(0, i * lineH); tft.print(lines[idx]); }
+        tft.drawString(lines[idx], 0, i * lineH);
     }
     tft.setTextWrap(true);
-    tft.setTextFont(1);  // restore GLCD for everything else
+    fontOff();
 }
 
 void addMessage(bool isUser, bool isError, const char* text) {
@@ -855,7 +858,7 @@ void enterPassword(const char* ssidPrompt, char* out) {
     kbVisible   = true;
 
     tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
-    tft.setTextFont(1);
+    fontOff();
     tft.setTextSize(1);
     tft.setTextColor(TFT_YELLOW, COL_BG);
     tft.setCursor(0, 0);  tft.print("Password for:");
@@ -1084,12 +1087,12 @@ void updateLedWifi() {
 // Returns true if connected. Pass showSplash=true for boot (draws title + "Connecting:" text).
 bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
     if (showSplash) {
-        tft.setFreeFont(&DejaVuSansBold12px);
+        fontOn();
         tft.setTextColor(TFT_NAVY, TFT_WHITE);
         char wifiMsg[80];
         snprintf(wifiMsg, sizeof(wifiMsg), "Connecting: %.55s...", ssid);
         tft.drawString(wifiMsg, 0, 0);
-        tft.setTextFont(1);
+        fontOff();
     }
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, pass);
@@ -1110,7 +1113,7 @@ void selectAP() {
         // --- Scan ---
         WiFi.disconnect(true);  // ensure clean idle state before scan (prev. begin() may leave driver busy)
         tft.fillScreen(COL_BG);
-        tft.setTextFont(1); tft.setTextColor(TFT_YELLOW, COL_BG);
+        fontOff(); tft.setTextColor(TFT_YELLOW, COL_BG);
         tft.setCursor(0, 0); tft.print("Scanning WiFi...");
 
         int n = WiFi.scanNetworks();
@@ -1175,7 +1178,7 @@ void selectAP() {
 
             // Show connecting
             tft.fillScreen(COL_BG);
-            tft.setTextFont(1); tft.setTextColor(TFT_BLUE, COL_BG);
+            fontOff(); tft.setTextColor(TFT_BLUE, COL_BG);
             char msg[80]; snprintf(msg, sizeof(msg), "Connecting: %.55s...", selSsid);
             tft.setCursor(0, 0); tft.print(msg);
 
@@ -1188,7 +1191,7 @@ void selectAP() {
 
             // --- Failed: offer re-enter or new scan ---
             tft.fillScreen(COL_BG);
-            tft.setTextFont(1);
+            fontOff();
             tft.setTextColor(TFT_RED, COL_BG);
             char failMsg[64]; snprintf(failMsg, sizeof(failMsg), "Failed: %.40s", selSsid);
             tft.setCursor(2, (AP_ROW_H - 8) / 2); tft.print(failMsg);
@@ -1891,13 +1894,13 @@ void selectModel() {
                 uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
                 tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
                 if (largeFont) {
-                    tft.setFreeFont(&DejaVuSansBold12px);
+                    fontOn();
                     tft.setTextColor(TFT_GREEN, bg);
                     tft.drawString("SLUG AI chatbot", 0, 0);
                     tft.drawString(GEMINI_MODEL, 0, LINE_H_LARGE);
                     tft.setTextColor(TFT_DARKGREY, bg);
                     tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
-                    tft.setTextFont(1);
+                    fontOff();
                 } else {
                     tft.setTextSize(1);
                     tft.setTextColor(TFT_GREEN, bg);
@@ -1922,13 +1925,13 @@ void selectModel() {
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
             if (largeFont) {
-                tft.setFreeFont(&DejaVuSansBold12px);
+                fontOn();
                 tft.setTextColor(TFT_GREEN, bg);
                 tft.drawString("SLUG AI Chatbot", 0, 0);
                 tft.drawString("Grok 4.1 Fast", 0, LINE_H_LARGE);
                 tft.setTextColor(TFT_DARKGREY, bg);
                 tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
-                tft.setTextFont(1);
+                fontOff();
             } else {
                 tft.setTextSize(1);
                 tft.setTextColor(TFT_GREEN, bg);
@@ -1952,13 +1955,13 @@ void selectModel() {
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
             if (largeFont) {
-                tft.setFreeFont(&DejaVuSansBold12px);
+                fontOn();
                 tft.setTextColor(TFT_GREEN, bg);
                 tft.drawString("SLUG AI chatbot", 0, 0);
                 tft.drawString("Groq GPT-OSS-120b", 0, LINE_H_LARGE);
                 tft.setTextColor(TFT_DARKGREY, bg);
                 tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
-                tft.setTextFont(1);
+                fontOff();
             } else {
                 tft.setTextSize(1);
                 tft.setTextColor(TFT_GREEN, bg);
@@ -1981,11 +1984,11 @@ void selectModel() {
                 drawKey(xb, row3Y, KEY_W, KEY_H, "b", COL_KEY_FACE, COL_KEY_LABEL);
                 largeFont = true;
                 tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
-                tft.setFreeFont(&DejaVuSansBold12px);
+                fontOn();
                 tft.setTextColor(TFT_DARKGREY, COL_BG);
                 tft.drawString("SLUG AI chatbot. Large text.", 0, 0);
                 tft.drawString("Select AI model:", 0, LINE_H_LARGE);
-                tft.setTextFont(1);
+                fontOff();
                 showModelChoices();
             }
         }
@@ -2002,11 +2005,11 @@ void selectModel() {
                 invertDisplay = !invertDisplay;
                 tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
                 if (largeFont) {
-                    tft.setFreeFont(&DejaVuSansBold12px);
+                    fontOn();
                     tft.setTextColor(TFT_DARKGREY, COL_BG);
                     tft.drawString("SLUG AI chatbot. Large text.", 0, 0);
                     tft.drawString("Select AI model:", 0, LINE_H_LARGE);
-                    tft.setTextFont(1);
+                    fontOff();
                 } else {
                     tft.setTextSize(1);
                     tft.setTextColor(TFT_DARKGREY, COL_BG);
