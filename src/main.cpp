@@ -29,6 +29,7 @@
 #include "fonts/DejaVuSansBold12px.h"  // custom 12px bold, yAdvance=15
 #include "fonts/DejaVuSansBold8px.h"   // custom 8px bold, yAdvance=10
 #include "images/splash.h"             // SLUG splash 320x117 RGB565
+#include "images/slugsmall.h"          // SLUGsmall 144x96 RGB565 with transparency
 #include <XPT2046_Touchscreen.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -204,9 +205,9 @@ void clearWifiPass(const char* ssid) {
 #define IBAR_H_KB_HIDE   20
 
 // --- Colours ---
-#define COL_BG          TFT_BLACK
+#define COL_BG          0x0841   // #080808 — nearest RGB565 to #0D0D0D
 #define COL_USER        TFT_CYAN
-#define COL_AI          TFT_YELLOW
+#define COL_AI          0xF760   // #F8EC00 — nearest RGB565 to #FFEE00
 #define COL_ERROR       TFT_RED
 #define COL_KEY_FACE    0x4208   // dark grey
 #define COL_KEY_LABEL   TFT_WHITE
@@ -636,13 +637,17 @@ void addMessage(bool isUser, bool isError, const char* text) {
             unsigned char b3 = (unsigned char)s[2];
             if (c == 0xC2) {
                 // 2-byte U+00xx
-                if      (b2 == 0xB0) rep = "deg";      // °
+                if      (b2 == 0xA0) rep = " ";        // non-breaking space
+                else if (b2 == 0xB0) rep = "deg";      // °
                 else if (b2 == 0xA9) rep = "(C)";      // ©
                 else if (b2 == 0xAE) rep = "(R)";      // ®
                 else if (b2 == 0xA3) rep = "Sterling";  // £
                 else if (b2 == 0xA5) rep = "Yen";      // ¥
                 else if (b2 == 0xB5) rep = "mu";       // µ
                 else if (b2 == 0xB1) rep = "+/-";      // ±
+                else if (b2 == 0xB2) rep = "2";        // ² superscript
+                else if (b2 == 0xB3) rep = "3";        // ³ superscript
+                else if (b2 == 0xB9) rep = "1";        // ¹ superscript
             } else if (c == 0xC3) {
                 // Latin-1 Supplement → ASCII equivalents
                 if      (b2 == 0x86)                rep = "AE"; // Æ
@@ -689,9 +694,26 @@ void addMessage(bool isUser, bool isError, const char* text) {
                     if      (b3 == 0x98 || b3 == 0x99) rep = "'";   // curly single quotes
                     else if (b3 == 0x9C || b3 == 0x9D) rep = "\"";  // curly double quotes
                     else if (b3 == 0x91)                rep = "-";   // non-breaking hyphen
+                    else if (b3 == 0x8B)                rep = "";    // zero-width space
                     else if (b3 == 0x93 || b3 == 0x94) rep = "-";   // en/em dash
                     else if (b3 == 0xA6)                rep = "..."; // ellipsis
                     else if (b3 == 0xA2)                rep = "-";   // bullet
+                } else if (b2 == 0x81) {
+                    // Superscript chars U+2070–U+207F (0xE2 0x81 0xB0–0xBF)
+                    if      (b3 == 0xB0) rep = "0";    // ⁰
+                    else if (b3 == 0xB1) rep = "i";    // ⁱ
+                    else if (b3 == 0xB4) rep = "4";    // ⁴
+                    else if (b3 == 0xB5) rep = "5";    // ⁵
+                    else if (b3 == 0xB6) rep = "6";    // ⁶
+                    else if (b3 == 0xB7) rep = "7";    // ⁷
+                    else if (b3 == 0xB8) rep = "8";    // ⁸
+                    else if (b3 == 0xB9) rep = "9";    // ⁹
+                    else if (b3 == 0xBA) rep = "+";    // ⁺
+                    else if (b3 == 0xBB) rep = "-";    // ⁻
+                    else if (b3 == 0xBC) rep = "=";    // ⁼
+                    else if (b3 == 0xBD) rep = "(";    // ⁽
+                    else if (b3 == 0xBE) rep = ")";    // ⁾
+                    else if (b3 == 0xBF) rep = "n";    // ⁿ
                 } else if (b2 == 0x82 && b3 == 0xAC)   rep = "Euro"; // €
             }
             // Consume UTF-8 sequence (lead + continuation bytes)
@@ -935,11 +957,20 @@ void handleTouch() {
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
 
-    // --- Input bar: Send/More button or Show KB (KB hidden) ---
+    // --- Input bar ---
     if (sy >= barY && sy < barY + barH) {
-        if (kbVisible || sx >= SCREEN_W - BTN_SEND_W) {
+        if (sx >= SCREEN_W - BTN_SEND_W) {
+            // Send/More button
             sendPrompt();
+        } else if (kbVisible) {
+            // Tap text area with KB shown → backspace
+            if (inputLen > 0) {
+                inputBuf[--inputLen] = '\0';
+                if (inputLen == 0 && historyCount > 0) moreMode = true;
+                drawInputBar();
+            }
         } else {
+            // KB hidden → show it
             kbVisible = true;
             tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
             drawHistory();
@@ -1191,6 +1222,7 @@ static const char* WAIT_MSGS[] = {
     "Is the Wi-Fi powered by ants?...",
     "ZZZ...",
     "Boring! Let's go already!...",
+    "SLUGGISH. It's a slime of the times...",
     "Tick-tock, tick-tock...",
     "Translating to sarcasm...",
     "Error 404: Speed not found...",
@@ -1212,11 +1244,13 @@ static const char* WAIT_MSGS[] = {
     "Welcome to the Eternity Experience...",
     "Where's the \"Go\" button?...",
     "Come back later...",
+    "This is a SLUGfest...",
     "If delays were cash, I'd be rich...",
     "Is this running on a TRS80?...",
     "Grrr...",
     "Hurry the fuck up, AI...",
     "You're a snail-ass bot...",
+	"Take the shell off a snail and it's SLUGGISH",
     "Speed up, you lazy git...",
     "Faster, you laggy lizard...",
     "Stop dragging, dumb AI...",
@@ -1770,7 +1804,33 @@ void calibrateTouch() {
     delay(1500);
 }
 
+// Slide the SLUG logo off to the right over 1 second
+void slideOutSlug() {
+    const int    imgX0 = SCREEN_W - SLUGSMALL_W;   // 176
+    const int    imgY  = 20;
+    const unsigned long dur = 1000UL;
+    unsigned long t0 = millis();
+    int prevX = imgX0;
+    while (true) {
+        unsigned long elapsed = millis() - t0;
+        if (elapsed >= dur) break;
+        int x = imgX0 + (int)((long)SLUGSMALL_W * elapsed / dur);
+        if (x > prevX) {
+            // Erase only the newly-exposed left strip (no transparent holes to worry about)
+            tft.fillRect(prevX, imgY, x - prevX, SLUGSMALL_H, COL_BG);
+            if (x < SCREEN_W)
+                tft.pushImage(x, imgY, SLUGSMALL_W, SLUGSMALL_H, SLUG_SMALL);
+            prevX = x;
+        }
+        delay(16);
+    }
+    tft.fillRect(imgX0, imgY, SLUGSMALL_W, SLUGSMALL_H, COL_BG);
+}
+
 void showModelChoices() {
+    // Slug logo top-right (below the two help lines, clear of left-aligned model text)
+    tft.pushImage(SCREEN_W - SLUGSMALL_W, 20, SLUGSMALL_W, SLUGSMALL_H, SLUG_SMALL);
+
     tft.setTextSize(1);
     tft.setTextColor(TFT_WHITE, COL_BG);
     tft.setCursor(0, 30); tft.print("Hit 1 for Gemini 2.5 Flash");
@@ -1787,7 +1847,6 @@ void showModelChoices() {
         tft.setCursor(0, nextY); tft.print("    i  to invert colours");
         nextY += 10;
     }
-    tft.setCursor(0, nextY); tft.print("    c  to calibrate touch");
 }
 
 void selectModel() {
@@ -1815,6 +1874,7 @@ void selectModel() {
                 drawKey(x, KB_Y, KEY_W, KEY_H, lbl, TFT_WHITE, COL_BG);
                 delay(KEY_FLASH_MS);
                 drawKey(x, KB_Y, KEY_W, KEY_H, lbl, COL_KEY_FACE, COL_KEY_LABEL);
+                slideOutSlug();
                 strncpy(GEMINI_MODEL, modelIds[i], 47);
                 GEMINI_MODEL[47] = '\0';
                 geminiUseGlobal  = modelGlobal[i];
@@ -1848,6 +1908,7 @@ void selectModel() {
             drawKey(x4, KB_Y, KEY_W, KEY_H, "4", TFT_WHITE, COL_BG);
             delay(KEY_FLASH_MS);
             drawKey(x4, KB_Y, KEY_W, KEY_H, "4", COL_KEY_FACE, COL_KEY_LABEL);
+            slideOutSlug();
             useGrok = true;
             useGroq = false;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
@@ -1877,6 +1938,7 @@ void selectModel() {
             drawKey(x5, KB_Y, KEY_W, KEY_H, "5", TFT_WHITE, COL_BG);
             delay(KEY_FLASH_MS);
             drawKey(x5, KB_Y, KEY_W, KEY_H, "5", COL_KEY_FACE, COL_KEY_LABEL);
+            slideOutSlug();
             useGroq = true;
             useGrok = false;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
