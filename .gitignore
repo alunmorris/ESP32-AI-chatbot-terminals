@@ -1,0 +1,8 @@
+# Private credentials — never commit
+src/secrets.h
+
+# PlatformIO build artifacts
+.pio/
+
+# Windows zone identifier files
+*.Zone.Identifier

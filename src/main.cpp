@@ -37,10 +37,8 @@
 #include <ESP32Ping.h>
 #include <Preferences.h>
 
-// --- Credentials ---
-const char* GEMINI_API_KEY  = "GEMINI_KEY_REMOVED";
-const char* GROK_API_KEY    = "GROK_KEY_REMOVED";
-const char* GROQ_API_KEY    = "GROQ_KEY_REMOVED";
+// --- Credentials (kept out of version control) ---
+#include "secrets.h"  // copy secrets.h.example → secrets.h and fill in your keys
 char        GEMINI_MODEL[48]  = "gemini-3.1-pro-preview"; // overwritten at boot
 bool        geminiUseGlobal   = false;  // true → /locations/global/ in path
 bool        useGrok           = false;  // true → route to Grok (xAI) instead of Gemini
