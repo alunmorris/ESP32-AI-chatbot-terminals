@@ -617,6 +617,19 @@ void drawHistory() {
     fontOff();
 }
 
+// Returns true if codepoint cp is covered by the VLW font.
+static bool supportedCodepoint(uint32_t cp) {
+    if (cp >= 0x0020 && cp <= 0x007E) return true;  // Printable ASCII
+    if (cp >= 0x00A0 && cp <= 0x017F) return true;  // Latin-1 + Latin Extended-A
+    if (cp == 0x03A9 || cp == 0x03C0) return true;  // Ω π
+    if (cp == 0x2011 || cp == 0x2013 || cp == 0x2014) return true;  // dashes
+    if (cp == 0x2018 || cp == 0x2019 || cp == 0x201C || cp == 0x201D) return true;  // quotes
+    if (cp == 0x2022 || cp == 0x2026) return true;  // bullet, ellipsis
+    if (cp >= 0x2070 && cp <= 0x207F) return true;  // superscripts
+    if (cp == 0x20AC) return true;  // €
+    return false;
+}
+
 void addMessage(bool isUser, bool isError, const char* text) {
     if (historyCount >= MAX_MESSAGES) {
         // Drop oldest two (user+AI pair)
@@ -627,111 +640,48 @@ void addMessage(bool isUser, bool isError, const char* text) {
     history[historyCount].isError = isError;
     strncpy(history[historyCount].text, text, 2047);
     history[historyCount].text[2047] = '\0';
-    // Sanitise to printable ASCII (32-126). Multi-char replacements use a temp
-    // buffer because some strings ("Sterling") are longer than their UTF-8 source.
+    // Sanitise: pass supported UTF-8 codepoints through unchanged.
+    // Strip C0 controls, drop U+200B (zero-width space), replace unsupported
+    // multi-byte sequences with '?'.
     {
         const char* s = history[historyCount].text;
         char tmp[2060];
         char* d   = tmp;
-        char* end = tmp + sizeof(tmp) - 10; // longest replacement is "Sterling"+null
+        char* end = tmp + sizeof(tmp) - 4;
         while (*s && d < end) {
             unsigned char c = (unsigned char)*s;
             if (c < 0x80) {
-                *d++ = (char)c;
+                // ASCII
+                if (c == '\n' || (c >= 0x20 && c != 0x7F)) *d++ = (char)c;
                 s++;
-                continue;
+            } else if ((c & 0xE0) == 0xC0) {
+                // 2-byte sequence
+                unsigned char b2 = (unsigned char)s[1];
+                if ((b2 & 0xC0) == 0x80) {
+                    uint32_t cp = ((c & 0x1F) << 6) | (b2 & 0x3F);
+                    if (supportedCodepoint(cp)) { *d++ = (char)c; *d++ = (char)b2; }
+                    else                         *d++ = '?';
+                    s += 2;
+                } else { *d++ = '?'; s++; }
+            } else if ((c & 0xF0) == 0xE0) {
+                // 3-byte sequence
+                unsigned char b2 = (unsigned char)s[1];
+                unsigned char b3 = (unsigned char)s[2];
+                if ((b2 & 0xC0) == 0x80 && (b3 & 0xC0) == 0x80) {
+                    uint32_t cp = ((c & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
+                    if (cp == 0x200B) {
+                        /* zero-width space: drop silently */
+                    } else if (supportedCodepoint(cp)) {
+                        *d++ = (char)c; *d++ = (char)b2; *d++ = (char)b3;
+                    } else { *d++ = '?'; }
+                    s += 3;
+                } else { *d++ = '?'; s++; }
+            } else if ((c & 0xF8) == 0xF0) {
+                // 4-byte sequence: unsupported range
+                *d++ = '?'; s += 4;
+            } else {
+                s++;  // invalid byte: skip
             }
-            // Identify replacement string for common UTF-8 sequences
-            char repBuf[2] = {'?', 0};
-            const char* rep = repBuf;
-            unsigned char b2 = (unsigned char)s[1];
-            unsigned char b3 = (unsigned char)s[2];
-            if (c == 0xC2) {
-                // 2-byte U+00xx
-                if      (b2 == 0xA0) rep = " ";        // non-breaking space
-                else if (b2 == 0xB0) rep = "deg";      // °
-                else if (b2 == 0xA9) rep = "(C)";      // ©
-                else if (b2 == 0xAE) rep = "(R)";      // ®
-                else if (b2 == 0xA3) rep = "Sterling";  // £
-                else if (b2 == 0xA5) rep = "Yen";      // ¥
-                else if (b2 == 0xB5) rep = "mu";       // µ
-                else if (b2 == 0xB1) rep = "+/-";      // ±
-                else if (b2 == 0xB2) rep = "2";        // ² superscript
-                else if (b2 == 0xB3) rep = "3";        // ³ superscript
-                else if (b2 == 0xB9) rep = "1";        // ¹ superscript
-            } else if (c == 0xC3) {
-                // Latin-1 Supplement → ASCII equivalents
-                if      (b2 == 0x86)                rep = "AE"; // Æ
-                else if (b2 == 0xA6)                rep = "ae"; // æ
-                else if (b2 == 0x9F)                rep = "ss"; // ß
-                else if (b2 == 0x9E)                rep = "Th"; // Þ
-                else if (b2 == 0xBE)                rep = "th"; // þ
-                else if (b2 == 0xB7)                rep = "/";  // ÷
-                else if (b2 == 0x97)                rep = "x";  // ×
-                else if (b2 >= 0x80 && b2 <= 0x85) rep = "A";  // À-Å
-                else if (b2 == 0x87)                rep = "C";  // Ç
-                else if (b2 >= 0x88 && b2 <= 0x8B) rep = "E";  // È-Ë
-                else if (b2 >= 0x8C && b2 <= 0x8F) rep = "I";  // Ì-Ï
-                else if (b2 == 0x90)                rep = "D";  // Ð
-                else if (b2 == 0x91)                rep = "N";  // Ñ
-                else if (b2 >= 0x92 && b2 <= 0x96) rep = "O";  // Ò-Ö
-                else if (b2 == 0x98)                rep = "O";  // Ø
-                else if (b2 >= 0x99 && b2 <= 0x9C) rep = "U";  // Ù-Ü
-                else if (b2 == 0x9D)                rep = "Y";  // Ý
-                else if (b2 >= 0xA0 && b2 <= 0xA5) rep = "a";  // à-å
-                else if (b2 == 0xA7)                rep = "c";  // ç
-                else if (b2 >= 0xA8 && b2 <= 0xAB) rep = "e";  // è-ë
-                else if (b2 >= 0xAC && b2 <= 0xAF) rep = "i";  // ì-ï
-                else if (b2 == 0xB0)                rep = "d";  // ð
-                else if (b2 == 0xB1)                rep = "n";  // ñ
-                else if (b2 >= 0xB2 && b2 <= 0xB6) rep = "o";  // ò-ö
-                else if (b2 == 0xB8)                rep = "o";  // ø
-                else if (b2 >= 0xB9 && b2 <= 0xBC) rep = "u";  // ù-ü
-                else if (b2 == 0xBD || b2 == 0xBF) rep = "y";  // ý ÿ
-            } else if (c == 0xC4 || c == 0xC5) {
-                // Latin Extended-A (U+0100-U+017F) → base ASCII letter
-                // 128-entry table indexed by (block_offset*64 + b2-0x80)
-                static const char tbl[] =
-                    "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiIiJjKkkLlLlLlL"
-                    "lLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs";
-                int idx = (c == 0xC5 ? 64 : 0) + (b2 - 0x80);
-                if (b2 >= 0x80 && idx < 128) { repBuf[0] = tbl[idx]; rep = repBuf; }
-            } else if (c == 0xCE) {
-                if (b2 == 0xA9)      rep = "omega";    // Ω
-            } else if (c == 0xCF) {
-                if (b2 == 0x80)      rep = "pi";       // π
-            } else if (c == 0xE2) {
-                if (b2 == 0x80) {
-                    if      (b3 == 0x98 || b3 == 0x99) rep = "'";   // curly single quotes
-                    else if (b3 == 0x9C || b3 == 0x9D) rep = "\"";  // curly double quotes
-                    else if (b3 == 0x91)                rep = "-";   // non-breaking hyphen
-                    else if (b3 == 0x8B)                rep = "";    // zero-width space
-                    else if (b3 == 0x93 || b3 == 0x94) rep = "-";   // en/em dash
-                    else if (b3 == 0xA6)                rep = "..."; // ellipsis
-                    else if (b3 == 0xA2)                rep = "-";   // bullet
-                } else if (b2 == 0x81) {
-                    // Superscript chars U+2070–U+207F (0xE2 0x81 0xB0–0xBF)
-                    if      (b3 == 0xB0) rep = "0";    // ⁰
-                    else if (b3 == 0xB1) rep = "i";    // ⁱ
-                    else if (b3 == 0xB4) rep = "4";    // ⁴
-                    else if (b3 == 0xB5) rep = "5";    // ⁵
-                    else if (b3 == 0xB6) rep = "6";    // ⁶
-                    else if (b3 == 0xB7) rep = "7";    // ⁷
-                    else if (b3 == 0xB8) rep = "8";    // ⁸
-                    else if (b3 == 0xB9) rep = "9";    // ⁹
-                    else if (b3 == 0xBA) rep = "+";    // ⁺
-                    else if (b3 == 0xBB) rep = "-";    // ⁻
-                    else if (b3 == 0xBC) rep = "=";    // ⁼
-                    else if (b3 == 0xBD) rep = "(";    // ⁽
-                    else if (b3 == 0xBE) rep = ")";    // ⁾
-                    else if (b3 == 0xBF) rep = "n";    // ⁿ
-                } else if (b2 == 0x82 && b3 == 0xAC)   rep = "Euro"; // €
-            }
-            // Consume UTF-8 sequence (lead + continuation bytes)
-            s++;
-            while ((*s & 0xC0) == 0x80) s++;
-            // Write replacement string
-            while (*rep) *d++ = *rep++;
         }
         *d = '\0';
         strncpy(history[historyCount].text, tmp, 2047);
