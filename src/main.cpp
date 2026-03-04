@@ -1,4 +1,4 @@
-// CYD AI chatbot for CYD28 (ESP32-2432S028R)
+// SLUG AI chatbot for CYD28 (ESP32-2432S028R)
 // 030326 Touch calibration: key C at boot, 2-point crosshair, saved to NVS
 // 030326 Transliterate accented chars (Latin-1, Latin Extended-A) to ASCII in addMessage
 // 030326 Add Groq API (api.groq.com), model qwen/qwen3-32b, key 5 at boot
@@ -28,6 +28,7 @@
 #include <TFT_eSPI.h>
 #include "fonts/DejaVuSansBold12px.h"  // custom 12px bold, yAdvance=15
 #include "fonts/DejaVuSansBold8px.h"   // custom 8px bold, yAdvance=10
+#include "images/splash.h"             // SLUG splash 320x117 RGB565
 #include <XPT2046_Touchscreen.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -1045,13 +1046,10 @@ void updateLedWifi() {
 bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
     if (showSplash) {
         tft.setFreeFont(&DejaVuSansBold12px);
-        tft.setTextColor(TFT_YELLOW, COL_BG);
-        tft.drawString("CYD AI chatbot v: 0.1.", 0, 0);
-        tft.drawString("It's cheap for a reason.", 0, LINE_H_LARGE);
-        tft.setTextColor(TFT_BLUE, COL_BG);
+        tft.setTextColor(TFT_NAVY, TFT_WHITE);
         char wifiMsg[80];
         snprintf(wifiMsg, sizeof(wifiMsg), "Connecting: %.55s...", ssid);
-        tft.drawString(wifiMsg, 0, 2 * LINE_H_LARGE);
+        tft.drawString(wifiMsg, 0, 0);
         tft.setTextFont(1);
     }
     WiFi.mode(WIFI_STA);
@@ -1061,7 +1059,7 @@ bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
         delay(WIFI_RETRY_DELAY_MS);
         attempts++;
     }
-    if (showSplash) tft.fillRect(0, 0, SCREEN_W, SPLASH_H, COL_BG);
+    if (showSplash) tft.fillRect(0, 0, SCREEN_W, LINE_H_LARGE + 2, TFT_WHITE);
     updateLedWifi();
     return WiFi.status() == WL_CONNECTED;
 }
@@ -1827,7 +1825,7 @@ void selectModel() {
                 if (largeFont) {
                     tft.setFreeFont(&DejaVuSansBold12px);
                     tft.setTextColor(TFT_GREEN, bg);
-                    tft.drawString("CYD AI chatbot", 0, 0);
+                    tft.drawString("SLUG AI chatbot", 0, 0);
                     tft.drawString(GEMINI_MODEL, 0, LINE_H_LARGE);
                     tft.setTextColor(TFT_DARKGREY, bg);
                     tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
@@ -1835,7 +1833,7 @@ void selectModel() {
                 } else {
                     tft.setTextSize(1);
                     tft.setTextColor(TFT_GREEN, bg);
-                    tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
+                    tft.setCursor(0,  0); tft.print("SLUG AI Chatbot v0.1");
                     tft.setCursor(0, 10); tft.print("Model: "); tft.print(GEMINI_MODEL);
                     tft.setTextColor(TFT_DARKGREY, bg);
                     tft.setCursor(0, 20); tft.print("Ready.");
@@ -1857,7 +1855,7 @@ void selectModel() {
             if (largeFont) {
                 tft.setFreeFont(&DejaVuSansBold12px);
                 tft.setTextColor(TFT_GREEN, bg);
-                tft.drawString("CYD AI chatbot", 0, 0);
+                tft.drawString("SLUG AI Chatbot", 0, 0);
                 tft.drawString("Grok 4.1 Fast", 0, LINE_H_LARGE);
                 tft.setTextColor(TFT_DARKGREY, bg);
                 tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
@@ -1865,7 +1863,7 @@ void selectModel() {
             } else {
                 tft.setTextSize(1);
                 tft.setTextColor(TFT_GREEN, bg);
-                tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
+                tft.setCursor(0,  0); tft.print("SLUG AI Chatbot. Swipe down/up to scroll.");
                 tft.setCursor(0, 10); tft.print("Model: Grok 4.1 Fast");
                 tft.setTextColor(TFT_DARKGREY, bg);
                 tft.setCursor(0, 20); tft.print("Ready.");
@@ -1886,7 +1884,7 @@ void selectModel() {
             if (largeFont) {
                 tft.setFreeFont(&DejaVuSansBold12px);
                 tft.setTextColor(TFT_GREEN, bg);
-                tft.drawString("CYD AI chatbot", 0, 0);
+                tft.drawString("SLUG AI chatbot", 0, 0);
                 tft.drawString("Groq GPT-OSS-120b", 0, LINE_H_LARGE);
                 tft.setTextColor(TFT_DARKGREY, bg);
                 tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
@@ -1894,7 +1892,7 @@ void selectModel() {
             } else {
                 tft.setTextSize(1);
                 tft.setTextColor(TFT_GREEN, bg);
-                tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
+                tft.setCursor(0,  0); tft.print("SLUG AI chatbot. Swipe down/up to scroll.");
                 tft.setCursor(0, 10); tft.print("Model: Groq GPT-OSS-120b");
                 tft.setTextColor(TFT_DARKGREY, bg);
                 tft.setCursor(0, 20); tft.print("Ready.");
@@ -1915,7 +1913,7 @@ void selectModel() {
                 tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
                 tft.setFreeFont(&DejaVuSansBold12px);
                 tft.setTextColor(TFT_DARKGREY, COL_BG);
-                tft.drawString("CYD AI chatbot. Large text.", 0, 0);
+                tft.drawString("SLUG AI chatbot. Large text.", 0, 0);
                 tft.drawString("Select AI model:", 0, LINE_H_LARGE);
                 tft.setTextFont(1);
                 showModelChoices();
@@ -1936,13 +1934,13 @@ void selectModel() {
                 if (largeFont) {
                     tft.setFreeFont(&DejaVuSansBold12px);
                     tft.setTextColor(TFT_DARKGREY, COL_BG);
-                    tft.drawString("CYD AI chatbot. Large text.", 0, 0);
+                    tft.drawString("SLUG AI chatbot. Large text.", 0, 0);
                     tft.drawString("Select AI model:", 0, LINE_H_LARGE);
                     tft.setTextFont(1);
                 } else {
                     tft.setTextSize(1);
                     tft.setTextColor(TFT_DARKGREY, COL_BG);
-                    tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
+                    tft.setCursor(0,  0); tft.print("SLUG AI chatbot");
                     tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
                 }
                 showModelChoices();
@@ -1962,7 +1960,7 @@ void selectModel() {
                 tft.fillScreen(COL_BG);
                 tft.setTextSize(1);
                 tft.setTextColor(TFT_DARKGREY, COL_BG);
-                tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
+                tft.setCursor(0,  0); tft.print("SLUG AI chatbot");
                 tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
                 drawKeyboard();
                 drawInputBar();
@@ -2021,19 +2019,26 @@ void setup() {
 
     setupRGBLed();
 
-    drawKeyboard();
-    drawInputBar();
+    // Boot splash at bottom; white area above it; "Connecting..." is the only text shown
+    unsigned long splashStart = millis();
+    tft.fillRect(0, 0, SCREEN_W, SCREEN_H - SLUG_H, TFT_WHITE);
+    tft.pushImage(0, SCREEN_H - SLUG_H, SLUG_W, SLUG_H, SLUG_SPLASH);
     bool wifiOk = connectWiFi(wifiSsid[0], wifiPass[0], true);
+    // Splash visible for at least 3 seconds
+    long splashRemain = 3000L - (long)(millis() - splashStart);
+    if (splashRemain > 0) delay(splashRemain);
+    tft.fillScreen(COL_BG);  // clear splash; back to normal dark background
+
     if (!wifiOk) {
         selectAP();  // scan → pick AP → enter password → connect; returns only on success
-        drawKeyboard();   // selectAP() wiped the screen; restore before selectModel()
-        drawInputBar();
     }
 
-    // Startup help — drawn directly in history area; cleared on first chat message
+    drawKeyboard();
+    drawInputBar();
+
     tft.setTextSize(1);
     tft.setTextColor(TFT_DARKGREY, COL_BG);
-    tft.setCursor(0,  0); tft.print("CYD AI chatbot. Swipe down for older chat.");
+    tft.setCursor(0,  0); tft.print("SLUG AI chatbot");
     tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
 
     selectModel();  // draws choices at y=30+ and waits for 1/2/3
