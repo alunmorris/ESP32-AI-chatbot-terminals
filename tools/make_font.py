@@ -29,6 +29,11 @@ CODEPOINTS = sorted(set([
 
 
 def make_vlw(size: int) -> bytes:
+    import PIL
+    pil_ver = tuple(int(x) for x in PIL.__version__.split('.')[:2])
+    if pil_ver < (8, 0):
+        print(f"Error: Pillow >= 8.0.0 required (found {PIL.__version__})", file=sys.stderr)
+        sys.exit(1)
     font = ImageFont.truetype(FONT_PATH, size)
     ascent_px, descent_px = font.getmetrics()
     canvas_h = ascent_px + descent_px + 8
@@ -44,13 +49,8 @@ def make_vlw(size: int) -> bytes:
         img = Image.new('L', (canvas_w, canvas_h), 0)
         draw = ImageDraw.Draw(img)
         # anchor='ls': left side of baseline — requires Pillow >= 8.0.0
-        try:
-            draw.text((4, ascent_px + 4), char, font=font, fill=255, anchor='ls')
-            baseline_y = ascent_px + 4
-        except TypeError:
-            # Older Pillow: no anchor param; default places ascender line at y
-            draw.text((4, 4), char, font=font, fill=255)
-            baseline_y = ascent_px + 4  # ascender at y=4, baseline = 4 + ascent_px
+        draw.text((4, ascent_px + 4), char, font=font, fill=255, anchor='ls')
+        baseline_y = ascent_px + 4
 
         bbox = img.getbbox()
         xadv = round(font.getlength(char))
