@@ -1,4 +1,5 @@
 // SLUG AI chatbot for CYD28 (ESP32-2432S028R)
+// 040326 Unicode fonts: VLW smooth fonts, Latin Extended + special chars, remove transliteration
 // 030326 Touch calibration: key C at boot, 2-point crosshair, saved to NVS
 // 030326 Transliterate accented chars (Latin-1, Latin Extended-A) to ASCII in addMessage
 // 030326 Add Groq API (api.groq.com), model qwen/qwen3-32b, key 5 at boot
@@ -472,7 +473,7 @@ Message           history[MAX_MESSAGES];
 int               historyCount = 0;
 
 // Rendered line cache
-static const int  MAX_LINES  = 400;
+static const int  MAX_LINES  = 250;       // 250×128=32KB DRAM; was 400 (overflow with 128-byte lines)
 char              lines[MAX_LINES][128];  // 127 bytes + null per line (UTF-8 safe)
 uint16_t          lineColor[MAX_LINES];
 int               lineCount    = 0;
