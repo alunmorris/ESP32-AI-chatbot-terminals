@@ -298,7 +298,8 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define GROQ_HOST         "api.groq.com"
 #define GROQ_MODEL        "openai/gpt-oss-120b"
 
-// Load/unload the 12px bold smooth font. Always call fontOff() after fontOn().
+// fontOn() loads 12px bold smooth font. fontOff() unloads whatever font is loaded.
+// Call sites needing 8px load it directly via tft.loadFont(DejaVuSansBold8pxData).
 void fontOn()  { tft.loadFont(DejaVuSansBold12pxData); }
 void fontOff() { tft.unloadFont(); }
 
