@@ -469,7 +469,7 @@ int               historyCount = 0;
 
 // Rendered line cache
 static const int  MAX_LINES  = 400;
-char              lines[MAX_LINES][54];   // 53 chars + null per line
+char              lines[MAX_LINES][128];  // 127 bytes + null per line (UTF-8 safe)
 uint16_t          lineColor[MAX_LINES];
 int               lineCount    = 0;
 int               scrollOffset = 0;       // lines scrolled up from bottom
@@ -482,25 +482,20 @@ void rebuildLines() {
         const char* prefix = history[m].isUser ? "You: " : "AI:  ";
         char full[2060];
         snprintf(full, sizeof(full), "%s%s", prefix, history[m].text);
-        // Strip control chars and high bytes (text already sanitised in addMessage,
-        // but prefix chars from prefix string are always clean ASCII).
-        for (int j = 0; full[j]; j++) {
-            unsigned char fc = (unsigned char)full[j];
-            if ((fc < 32 && full[j] != '\n') || fc > 126) full[j] = ' ';
-        }
+        // Text is pre-validated UTF-8 from addMessage(). Prefix chars are clean ASCII.
 
         if (largeFont) {
             // Pixel-width word wrap for DejaVuSansBold12px
             tft.setFreeFont(&DejaVuSansBold12px);
-            char lineBuf[54] = "";
+            char lineBuf[128] = "";
             const char* p = full;
             while (*p && lineCount < MAX_LINES - 1) {
                 if (*p == '\n') {
                     // Only flush if there's content — skip blank lines to
                     // avoid wasting the small number of visible large-font slots
                     if (lineBuf[0]) {
-                        strncpy(lines[lineCount], lineBuf, 53);
-                        lines[lineCount][53] = '\0';
+                        strncpy(lines[lineCount], lineBuf, 127);
+                        lines[lineCount][127] = '\0';
                         lineColor[lineCount++] = col;
                         lineBuf[0] = '\0';
                     }
@@ -512,68 +507,83 @@ void rebuildLines() {
                 while (*p && *p != ' ' && *p != '\n') p++;
                 int wlen = p - ws;
                 if (wlen <= 0) { if (*p) p++; continue; }
-                char word[54];
-                strncpy(word, ws, min(wlen, 53));
-                word[min(wlen, 53)] = '\0';
+                char word[128];
+                strncpy(word, ws, min(wlen, 127));
+                word[min(wlen, 127)] = '\0';
                 if (*p == ' ') p++;
                 // Test word on current line
-                char test[108];   // lineBuf(53) + space(1) + word(53) + null
-                if (lineBuf[0]) snprintf(test, 108, "%s %s", lineBuf, word);
-                else            { strncpy(test, word, 53); test[53] = '\0'; }
+                char test[260];   // lineBuf(127) + space(1) + word(127) + null
+                if (lineBuf[0]) snprintf(test, 260, "%s %s", lineBuf, word);
+                else            { strncpy(test, word, 127); test[127] = '\0'; }
                 if (tft.textWidth(test) <= SCREEN_W - 2) {
-                    strncpy(lineBuf, test, 53); lineBuf[53] = '\0';
+                    strncpy(lineBuf, test, 127); lineBuf[127] = '\0';
                 } else {
                     if (lineBuf[0]) {
-                        strncpy(lines[lineCount], lineBuf, 53);
-                        lines[lineCount][53] = '\0';
+                        strncpy(lines[lineCount], lineBuf, 127);
+                        lines[lineCount][127] = '\0';
                         lineColor[lineCount++] = col;
-                        strncpy(lineBuf, word, 53); lineBuf[53] = '\0';
+                        strncpy(lineBuf, word, 127); lineBuf[127] = '\0';
                     } else {
-                        strncpy(lines[lineCount], word, 53);
-                        lines[lineCount][53] = '\0';
+                        strncpy(lines[lineCount], word, 127);
+                        lines[lineCount][127] = '\0';
                         lineColor[lineCount++] = col;
                     }
                 }
             }
             if (lineBuf[0] && lineCount < MAX_LINES) {
-                strncpy(lines[lineCount], lineBuf, 53);
-                lines[lineCount][53] = '\0';
+                strncpy(lines[lineCount], lineBuf, 127);
+                lines[lineCount][127] = '\0';
                 lineColor[lineCount++] = col;
             }
             tft.setTextFont(1);
         } else {
-            int len = strlen(full);
-            int pos = 0;
-            while (pos < len && lineCount < MAX_LINES - 1) {
-                // Look for \n within the next 54 chars (forced break wins over word-wrap)
-                int nlPos = -1;
-                for (int j = pos; j < pos + 54 && j < len; j++) {
-                    if (full[j] == '\n') { nlPos = j; break; }
-                }
-                if (nlPos >= 0) {
-                    int count = nlPos - pos;
-                    strncpy(lines[lineCount], full + pos, count);
-                    lines[lineCount][count] = '\0';
-                    lineColor[lineCount++] = col;
-                    pos = nlPos + 1;
-                } else {
-                    int remaining = len - pos;
-                    if (remaining <= 53) {
-                        strncpy(lines[lineCount], full + pos, remaining);
-                        lines[lineCount][remaining] = '\0';
-                        pos = len;
-                    } else {
-                        int cut = pos + 53;
-                        while (cut > pos && full[cut] != ' ') cut--;
-                        if (cut == pos) cut = pos + 53;
-                        int count = cut - pos;
-                        strncpy(lines[lineCount], full + pos, count);
-                        lines[lineCount][count] = '\0';
-                        pos = cut + (full[cut] == ' ' ? 1 : 0);
+            // Pixel-width word wrap for DejaVuSansBold8px
+            tft.loadFont(DejaVuSansBold8pxData);
+            char lineBuf[128] = "";
+            const char* p = full;
+            while (*p && lineCount < MAX_LINES - 1) {
+                if (*p == '\n') {
+                    if (lineBuf[0]) {
+                        strncpy(lines[lineCount], lineBuf, 127);
+                        lines[lineCount][127] = '\0';
+                        lineColor[lineCount++] = col;
+                        lineBuf[0] = '\0';
                     }
-                    lineColor[lineCount++] = col;
+                    p++;
+                    continue;
+                }
+                const char* ws = p;
+                while (*p && *p != ' ' && *p != '\n') p++;
+                int wlen = p - ws;
+                if (wlen <= 0) { if (*p) p++; continue; }
+                char word[128];
+                strncpy(word, ws, min(wlen, 127));
+                word[min(wlen, 127)] = '\0';
+                if (*p == ' ') p++;
+                char test[260];
+                if (lineBuf[0]) snprintf(test, 260, "%s %s", lineBuf, word);
+                else            { strncpy(test, word, 127); test[127] = '\0'; }
+                if (tft.textWidth(test) <= SCREEN_W - 2) {
+                    strncpy(lineBuf, test, 127); lineBuf[127] = '\0';
+                } else {
+                    if (lineBuf[0]) {
+                        strncpy(lines[lineCount], lineBuf, 127);
+                        lines[lineCount][127] = '\0';
+                        lineColor[lineCount++] = col;
+                        strncpy(lineBuf, word, 127); lineBuf[127] = '\0';
+                    } else {
+                        strncpy(lines[lineCount], word, 127);
+                        lines[lineCount][127] = '\0';
+                        lineColor[lineCount++] = col;
+                    }
                 }
             }
+            if (lineBuf[0] && lineCount < MAX_LINES) {
+                strncpy(lines[lineCount], lineBuf, 127);
+                lines[lineCount][127] = '\0';
+                lineColor[lineCount++] = col;
+            }
+            tft.unloadFont();
         }
     }
 }
