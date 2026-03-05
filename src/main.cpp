@@ -28,7 +28,7 @@
 #include <SPI.h>
 #include <TFT_eSPI.h>
 #include "fonts/DejaVuSansBold12px.h"  // VLW smooth font 12px (Unicode)
-#include "fonts/DejaVuSansBold8px.h"   // VLW smooth font 8px (Unicode)
+#include "fonts/DejaVuSansBold8px.h"   // VLW smooth font 10px (Unicode)
 #include "images/splash.h"             // SLUG splash 320x117 RGB565
 #include "images/slugsmall.h"          // SLUGsmall 144x96 RGB565 with transparency
 #include <XPT2046_Touchscreen.h>
@@ -261,8 +261,8 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define KEY_RADIUS        3     // rounded corner radius for keys
 
 // --- Layout metrics ---
-#define LINE_H_LARGE     15     // DejaVuSansBold12px line height (yAdvance=15)
-#define LINE_H_SMALL     10     // GLCD line height (8px + 2px gap)
+#define LINE_H_LARGE     14     // DejaVuSansBold12px line height (yAdvance=13) + 1px gap
+#define LINE_H_SMALL     12     // DejaVuSansBold10px line height (yAdvance=13) - 1px
 #define SPLASH_H         45     // height of boot splash area to clear after connect (3 × LINE_H_LARGE)
 
 // --- Input bar ---
@@ -271,7 +271,9 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define BTN_SEND_W       46     // width of Send/More button
 #define BTN_SEND_X_TEXT  39     // distance of Send/More text from right edge
 #define BTN_SHOWKB_W     58     // width of Show KB button
-#define BTN_SHOWKB_X    110     // distance of Show KB button left edge from right
+#define BTN_SHOWKB_X    144     // distance of Show KB button left edge from right (BTN_NEW_X + BTN_SHOWKB_W + 2)
+#define BTN_NEW_W        36     // width of New button (KB hidden only)
+#define BTN_NEW_X        84     // distance of New button left edge from right (BTN_SEND_W + BTN_NEW_W + 2)
 #define BTN_INSET         2     // pixel inset for button fill within input bar
 
 // --- Timing ---
@@ -299,7 +301,7 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define GROQ_MODEL        "openai/gpt-oss-120b"
 
 // fontOn() loads 12px bold smooth font. fontOff() unloads whatever font is loaded.
-// Call sites needing 8px load it directly via tft.loadFont(DejaVuSansBold8pxData).
+// Call sites needing 10px load it directly via tft.loadFont(DejaVuSansBold8pxData).
 void fontOn()  { tft.loadFont(DejaVuSansBold12pxData); }
 void fontOff() { tft.unloadFont(); }
 
@@ -453,12 +455,17 @@ void drawInputBar() {
     tft.setCursor(SCREEN_W - BTN_SEND_X_TEXT, barY + (barH - 8) / 2);
     tft.print(moreMode ? "More" : "Send");
 
-    // Show KB button (only when KB hidden)
+    // Show KB and New buttons (only when KB hidden)
     if (!kbVisible) {
         tft.fillRect(SCREEN_W - BTN_SHOWKB_X, barY + BTN_INSET, BTN_SHOWKB_W, barH - BTN_INSET*2, COL_BTN_BG);
         tft.setTextColor(COL_BTN_TEXT, COL_BTN_BG);
         tft.setCursor(SCREEN_W - BTN_SHOWKB_X + 3, barY + (barH - 8) / 2);
         tft.print("Show KB");
+
+        tft.fillRect(SCREEN_W - BTN_NEW_X, barY + BTN_INSET, BTN_NEW_W, barH - BTN_INSET*2, COL_BTN_BG);
+        tft.setTextColor(COL_BTN_TEXT, COL_BTN_BG);
+        tft.setCursor(SCREEN_W - BTN_NEW_X + 4, barY + (barH - 8) / 2);
+        tft.print("New");
     }
 }
 
@@ -466,6 +473,7 @@ void drawInputBar() {
 struct Message {
     bool   isUser;
     bool   isError;
+    bool   displayOnly;  // true = show in chat but never sent to AI
     char   text[2048];
 };
 
@@ -477,6 +485,7 @@ int               historyCount = 0;
 static const int  MAX_LINES  = 250;       // 250×128=32KB DRAM; was 400 (overflow with 128-byte lines)
 char              lines[MAX_LINES][128];  // 127 bytes + null per line (UTF-8 safe)
 uint16_t          lineColor[MAX_LINES];
+bool              lineIsUser[MAX_LINES];  // true = right-align (user message)
 int               lineCount    = 0;
 int               scrollOffset = 0;       // lines scrolled up from bottom
 
@@ -485,10 +494,8 @@ void rebuildLines() {
     for (int m = 0; m < historyCount && lineCount < MAX_LINES - 2; m++) {
         uint16_t col = history[m].isError ? COL_ERROR :
                        history[m].isUser  ? COL_USER  : COL_AI;
-        const char* prefix = history[m].isUser ? "You: " : "AI:  ";
-        char full[2060];
-        snprintf(full, sizeof(full), "%s%s", prefix, history[m].text);
-        // Text is pre-validated UTF-8 from addMessage(). Prefix chars are clean ASCII.
+        bool isUser = history[m].isUser;
+        const char* full = history[m].text;
 
         if (largeFont) {
             // Pixel-width word wrap for DejaVuSansBold12px
@@ -502,7 +509,7 @@ void rebuildLines() {
                     if (lineBuf[0]) {
                         strncpy(lines[lineCount], lineBuf, 127);
                         lines[lineCount][127] = '\0';
-                        lineColor[lineCount++] = col;
+                        lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
                         lineBuf[0] = '\0';
                     }
                     p++;
@@ -527,23 +534,23 @@ void rebuildLines() {
                     if (lineBuf[0]) {
                         strncpy(lines[lineCount], lineBuf, 127);
                         lines[lineCount][127] = '\0';
-                        lineColor[lineCount++] = col;
+                        lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
                         strncpy(lineBuf, word, 127); lineBuf[127] = '\0';
                     } else {
                         strncpy(lines[lineCount], word, 127);
                         lines[lineCount][127] = '\0';
-                        lineColor[lineCount++] = col;
+                        lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
                     }
                 }
             }
             if (lineBuf[0] && lineCount < MAX_LINES) {
                 strncpy(lines[lineCount], lineBuf, 127);
                 lines[lineCount][127] = '\0';
-                lineColor[lineCount++] = col;
+                lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
             }
             fontOff();
         } else {
-            // Pixel-width word wrap for DejaVuSansBold8px
+            // Pixel-width word wrap for DejaVuSansBold10px
             tft.loadFont(DejaVuSansBold8pxData);
             char lineBuf[128] = "";
             const char* p = full;
@@ -552,7 +559,7 @@ void rebuildLines() {
                     if (lineBuf[0]) {
                         strncpy(lines[lineCount], lineBuf, 127);
                         lines[lineCount][127] = '\0';
-                        lineColor[lineCount++] = col;
+                        lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
                         lineBuf[0] = '\0';
                     }
                     p++;
@@ -575,19 +582,19 @@ void rebuildLines() {
                     if (lineBuf[0]) {
                         strncpy(lines[lineCount], lineBuf, 127);
                         lines[lineCount][127] = '\0';
-                        lineColor[lineCount++] = col;
+                        lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
                         strncpy(lineBuf, word, 127); lineBuf[127] = '\0';
                     } else {
                         strncpy(lines[lineCount], word, 127);
                         lines[lineCount][127] = '\0';
-                        lineColor[lineCount++] = col;
+                        lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
                     }
                 }
             }
             if (lineBuf[0] && lineCount < MAX_LINES) {
                 strncpy(lines[lineCount], lineBuf, 127);
                 lines[lineCount][127] = '\0';
-                lineColor[lineCount++] = col;
+                lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
             }
             tft.unloadFont();
         }
@@ -613,7 +620,13 @@ void drawHistory() {
         uint16_t col = lineColor[idx];
         if (invertDisplay) col = TFT_BLACK;
         tft.setTextColor(col, bg);
-        tft.drawString(lines[idx], 0, i * lineH);
+        if (lineIsUser[idx]) {
+            tft.setTextDatum(TR_DATUM);
+            tft.drawString(lines[idx], SCREEN_W, i * lineH);
+            tft.setTextDatum(TL_DATUM);
+        } else {
+            tft.drawString(lines[idx], 0, i * lineH);
+        }
     }
     tft.setTextWrap(true);
     fontOff();
@@ -638,8 +651,9 @@ void addMessage(bool isUser, bool isError, const char* text) {
         memmove(history, history + 2, (MAX_MESSAGES - 2) * sizeof(Message));
         historyCount -= 2;
     }
-    history[historyCount].isUser  = isUser;
-    history[historyCount].isError = isError;
+    history[historyCount].isUser       = isUser;
+    history[historyCount].isError      = isError;
+    history[historyCount].displayOnly  = false;
     strncpy(history[historyCount].text, text, 2047);
     history[historyCount].text[2047] = '\0';
     // Sanitise: pass supported UTF-8 codepoints through unchanged.
@@ -922,7 +936,29 @@ void handleTouch() {
 
     // --- Input bar ---
     if (sy >= barY && sy < barY + barH) {
-        if (sx >= SCREEN_W - BTN_SEND_W) {
+        // When KB is hidden, check New before Send — New sits adjacent to Send and
+        // touch imprecision can cause taps aimed at New to register in the Send zone.
+        if (!kbVisible && sx >= SCREEN_W - BTN_NEW_X && sx < SCREEN_W - BTN_SEND_W + 4) {
+            // New button → clear history, add marker, show KB
+            historyCount = 0;
+            lineCount    = 0;
+            scrollOffset = 0;
+            moreMode     = false;
+            inputBuf[0]  = '\0';
+            inputLen     = 0;
+            // Add [New chat] as a display-only marker (never sent to AI)
+            history[historyCount].isUser      = true;
+            history[historyCount].isError     = false;
+            history[historyCount].displayOnly = true;
+            strncpy(history[historyCount].text, "[New chat]", 2047);
+            historyCount++;
+            rebuildLines();
+            kbVisible    = true;
+            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
+            drawHistory();
+            drawInputBar();
+            drawKeyboard();
+        } else if (sx >= SCREEN_W - BTN_SEND_W) {
             // Send/More button
             sendPrompt();
         } else if (kbVisible) {
@@ -1191,6 +1227,8 @@ static const char* WAIT_MSGS[] = {
     "Error 404: Speed not found...",
     "What's the holdup?...",
     "C'mon already!...",
+    "I'll try a Babbage Engine instead...",
+    "Have you got brain fog?...",
     "I haven't got all day!...",
     "Get a move on!...",
     "Let's see some action here...",
@@ -1198,6 +1236,7 @@ static const char* WAIT_MSGS[] = {
     "This is nuts!...",
     "AI=Annoyingly Indolent...",
     "Awkward silence...",
+    "Did all your bytes fall out?...",
     "This is embarrasing...",
     "Ordering a slow hand-clap...",
     "Did you install bloatware?...",
@@ -1213,8 +1252,10 @@ static const char* WAIT_MSGS[] = {
     "Grrr...",
     "Hurry the fuck up, AI...",
     "You're a snail-ass bot...",
+    "I'm on Gigashit internet...",
 	"Take the shell off a snail and it's SLUGGISH",
     "Speed up, you lazy git...",
+    "It'd be quicker to walk to the data...",
     "Faster, you laggy lizard...",
     "Stop dragging, dumb AI...",
     "Quicken it, turtle twit...",
@@ -1239,9 +1280,9 @@ void showWaiting(const char* msg) {
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
     tft.fillRect(0, barY, SCREEN_W - BTN_SEND_W, barH, COL_IBAR_BG);
     tft.setTextColor(TFT_DARKGREY, COL_IBAR_BG);
-    tft.setTextSize(1);
-    tft.setCursor(2, barY + (barH - 8) / 2);
-    tft.print(msg);
+    tft.loadFont(DejaVuSansBold8pxData);
+    tft.drawString(msg, 2, barY + (barH - LINE_H_SMALL) / 2);
+    tft.unloadFont();
 }
 
 // Handle Hide / Show KB tap during blocking API wait
@@ -1289,6 +1330,7 @@ String callGemini(const char* prompt) {
     // Add conversation history (exclude the final entry — that IS the current prompt,
     // already appended to history[] by addMessage() in sendPrompt before this call)
     for (int i = 0; i < historyCount - 1; i++) {
+        if (history[i].displayOnly) continue;
         JsonObject msg  = contents.add<JsonObject>();
         msg["role"]     = history[i].isUser ? "user" : "model";
         JsonArray parts = msg["parts"].to<JsonArray>();
@@ -1326,6 +1368,7 @@ String callGemini(const char* prompt) {
     client.setInsecure();
     client.setTimeout(API_TIMEOUT_MS / 1000);   // 45s TLS timeout (pro model needs longer)
 
+    showWaiting("Thinking...");  // re-assert just before blocking TLS handshake
     if (!client.connect(GEMINI_HOST, HTTPS_PORT)) {
         return "ERR: connect failed (check WiFi/DNS)";
     }
@@ -1411,6 +1454,7 @@ String callGrok(const char* prompt) {
 
     // Conversation history (exclude last entry — that is the current prompt)
     for (int i = 0; i < historyCount - 1; i++) {
+        if (history[i].displayOnly) continue;
         JsonObject msg  = input.add<JsonObject>();
         msg["role"]     = history[i].isUser ? "user" : "assistant";
         msg["content"]  = history[i].text;
@@ -1437,6 +1481,7 @@ String callGrok(const char* prompt) {
     client.setInsecure();
     client.setTimeout(API_TIMEOUT_MS / 1000);
 
+    showWaiting("Thinking...");  // re-assert just before blocking TLS handshake
     if (!client.connect(GROK_HOST, HTTPS_PORT)) {
         return "ERR: connect failed (check WiFi/DNS)";
     }
@@ -1566,6 +1611,7 @@ String callGroq(const char* prompt) {
 
     // Conversation history (exclude last entry — current prompt)
     for (int i = 0; i < historyCount - 1; i++) {
+        if (history[i].displayOnly) continue;
         JsonObject msg  = messages.add<JsonObject>();
         msg["role"]     = history[i].isUser ? "user" : "assistant";
         msg["content"]  = history[i].text;
@@ -1588,6 +1634,7 @@ String callGroq(const char* prompt) {
     client.setInsecure();
     client.setTimeout(API_TIMEOUT_MS / 1000);
 
+    showWaiting("Thinking...");  // re-assert just before blocking TLS handshake
     if (!client.connect(GROQ_HOST, HTTPS_PORT)) {
         return "ERR: connect failed (check WiFi/DNS)";
     }
@@ -1666,16 +1713,16 @@ void showThinking() {
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
     tft.fillRect(0, barY, SCREEN_W - BTN_SEND_W, barH, COL_IBAR_BG);
     tft.setTextColor(TFT_DARKGREY, COL_IBAR_BG);
-    tft.setTextSize(1);
-    tft.setCursor(2, barY + (barH - 8) / 2);
-    tft.print("Thinking...");
+    tft.loadFont(DejaVuSansBold8pxData);
+    tft.drawString("Thinking...", 2, barY + (barH - LINE_H_SMALL) / 2);
+    tft.unloadFont();
 }
 
 void sendPrompt() {
     char prompt[128];
     if (inputLen == 0) {
         if (!moreMode) return;  // nothing typed and no AI reply yet — ignore tap
-        strncpy(prompt, "Tell me more.", 127);
+        strncpy(prompt, "Tell me more", 127);
     } else {
         strncpy(prompt, inputBuf, 127);
         inputBuf[0] = '\0';

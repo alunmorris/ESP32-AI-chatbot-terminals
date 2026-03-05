@@ -81,12 +81,14 @@ def make_vlw(size: int) -> bytes:
     gcount = len(glyphs)
 
     # Header: 6 × big-endian uint32
+    # TFT_eSPI read order: gCount, discard, yAdvance, discard, ascent, descent
     header = struct.pack('>IIIIII',
         gcount,
-        ascent_px + descent_px,  # yAdvance (recalculated at load time anyway)
-        ascent_px,
-        descent_px,
-        0, 0)
+        1,                       # encoder version (discarded by TFT_eSPI)
+        ascent_px + descent_px,  # yAdvance (overwritten by loadMetrics anyway)
+        0,                       # discarded
+        ascent_px,               # → gFont.ascent
+        descent_px)              # → gFont.descent
 
     # Glyph table: gcount × 7 × big-endian int32
     glyph_table = b''
