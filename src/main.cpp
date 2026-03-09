@@ -1,4 +1,5 @@
 // SLUG AI chatbot for CYD28 (ESP32-2432S028R)
+// 090326 Key click: 4 kHz squarewave 10 ms on GPIO 26 speaker (LEDC ch 3)
 // 040326 Unicode fonts: VLW smooth fonts, Latin Extended + special chars, remove transliteration
 // 030326 Touch calibration: key C at boot, 2-point crosshair, saved to NVS
 // 030326 Transliterate accented chars (Latin-1, Latin Extended-A) to ASCII in addMessage
@@ -184,6 +185,13 @@ void clearWifiPass(const char* ssid) {
 #define LED_R_CH        0   // LEDC channels
 #define LED_G_CH        1
 #define LED_B_CH        2
+
+// --- Speaker ---
+#define SPEAKER_PIN    26
+#define SPK_CH          3   // LEDC channel for speaker
+#define SPK_VOLUME     8   // click duty cycle: 64/255 ≈ 25% of max
+#define SPK_CLICK_MS   1   // click tone duration ms
+void clickSound();          // forward declaration
 
 // --- Screen dimensions ---
 #define SCREEN_W        320
@@ -657,8 +665,8 @@ void addMessage(bool isUser, bool isError, const char* text) {
     strncpy(history[historyCount].text, text, 2047);
     history[historyCount].text[2047] = '\0';
     // Sanitise: pass supported UTF-8 codepoints through unchanged.
-    // Strip C0 controls, drop U+200B (zero-width space), replace unsupported
-    // multi-byte sequences with '?'.
+    // Strip C0 controls; normalise space-like and hyphen-like chars not in font;
+    // drop zero-width/invisible chars; replace remaining unsupported sequences with '?'.
     {
         const char* s = history[historyCount].text;
         char tmp[2060];
@@ -675,7 +683,9 @@ void addMessage(bool isUser, bool isError, const char* text) {
                 unsigned char b2 = (unsigned char)s[1];
                 if ((b2 & 0xC0) == 0x80) {
                     uint32_t cp = ((c & 0x1F) << 6) | (b2 & 0x3F);
-                    if (supportedCodepoint(cp)) { *d++ = (char)c; *d++ = (char)b2; }
+                    if (cp == 0x00AD) {
+                        /* U+00AD soft hyphen: drop silently */
+                    } else if (supportedCodepoint(cp)) { *d++ = (char)c; *d++ = (char)b2; }
                     else                         *d++ = '?';
                     s += 2;
                 } else { *d++ = '?'; s++; }
@@ -685,8 +695,16 @@ void addMessage(bool isUser, bool isError, const char* text) {
                 unsigned char b3 = (unsigned char)s[2];
                 if ((b2 & 0xC0) == 0x80 && (b3 & 0xC0) == 0x80) {
                     uint32_t cp = ((c & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
-                    if (cp == 0x200B) {
-                        /* zero-width space: drop silently */
+                    // Typographic spaces not in font → ASCII space
+                    if ((cp >= 0x2000 && cp <= 0x200A) || cp == 0x202F || cp == 0x205F) {
+                        *d++ = ' ';
+                    // Hyphen-like chars not in font → ASCII hyphen-minus
+                    } else if (cp == 0x2010 || cp == 0x2012 || cp == 0x2015 || cp == 0x2212) {
+                        *d++ = '-';
+                    // Zero-width / invisible: drop silently
+                    } else if (cp == 0x200B || cp == 0x200C || cp == 0x200D ||
+                               cp == 0x2060 || cp == 0xFEFF) {
+                        /* drop */
                     } else if (supportedCodepoint(cp)) {
                         *d++ = (char)c; *d++ = (char)b2; *d++ = (char)b3;
                     } else { *d++ = '?'; }
@@ -805,6 +823,7 @@ String typeKBKey(int sx, int sy) {
     }
 
     if (kx >= 0 && typed.length() > 0) {
+        clickSound();
         drawKey(kx, rowY, KEY_W, KEY_H, lbl, TFT_WHITE, COL_BG);
         delay(KEY_FLASH_MS);
         drawKey(kx, rowY, KEY_W, KEY_H, lbl, COL_KEY_FACE, COL_KEY_LABEL);
@@ -964,6 +983,7 @@ void handleTouch() {
         } else if (kbVisible) {
             // Tap text area with KB shown → backspace
             if (inputLen > 0) {
+                clickSound();
                 inputBuf[--inputLen] = '\0';
                 if (inputLen == 0 && historyCount > 0) moreMode = true;
                 drawInputBar();
@@ -987,6 +1007,7 @@ void handleTouch() {
         // BS — tall key at bottom left, spans row 3/4 area
         int bsY = SCREEN_H - BS_H;
         if (inRect(sx, sy, BS_X, bsY, BS_W, BS_H)) {
+            clickSound();
             drawKey(BS_X, bsY, BS_W, BS_H, "<-", TFT_WHITE, COL_BTN_TEXT);
             delay(KEY_FLASH_MS);
             drawKey(BS_X, bsY, BS_W, BS_H, "<-", COL_BTN_BG, COL_BTN_TEXT);
@@ -1001,14 +1022,17 @@ void handleTouch() {
         // Row 4 special keys
         if (sy >= row4Y && sy < row4Y + KEY_H - 1) {
             if (inRect(sx, sy, SHIFT_X, row4Y, SHIFT_W, KEY_H - 1)) {
+                clickSound();
                 shiftOn = !shiftOn;
                 if (shiftOn) altOn = false;
                 drawKeyboard();
             } else if (inRect(sx, sy, ALT_X, row4Y, ALT_W, KEY_H - 1)) {
+                clickSound();
                 altOn = !altOn;
                 if (altOn) shiftOn = false;
                 drawKeyboard();
             } else if (inRect(sx, sy, SPACE_X, row4Y, SPACE_W, KEY_H - 1)) {
+                clickSound();
                 drawKey(SPACE_X, row4Y, SPACE_W, KEY_H - 1, "SPACE", TFT_WHITE, COL_BG);
                 delay(KEY_FLASH_MS);
                 drawKey(SPACE_X, row4Y, SPACE_W, KEY_H - 1, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
@@ -1055,6 +1079,19 @@ void setupRGBLed() {
     ledcAttachPin(LED_G_PIN, LED_G_CH);
     ledcAttachPin(LED_B_PIN, LED_B_CH);
     setRGBLed(0, 0, 0);  // off at start
+}
+
+// --- Speaker ---
+void setupSpeaker() {
+    ledcSetup(SPK_CH, 4000, 8);  // 4 kHz, 8-bit resolution
+    ledcAttachPin(SPEAKER_PIN, SPK_CH);
+    ledcWrite(SPK_CH, 0);        // silent
+}
+
+void clickSound() {
+    ledcWrite(SPK_CH, SPK_VOLUME);  // squarewave at configured volume
+    delay(SPK_CLICK_MS);
+    ledcWrite(SPK_CH, 0);        // silence
 }
 
 // Set LED colour based on WiFi RSSI (called after every health check)
@@ -1881,6 +1918,7 @@ void selectModel() {
         for (int i = 0; i < 3; i++, x += KEY_W) {
             if (inRect(sx, sy, x, KB_Y, KEY_W, KEY_H)) {
                 char lbl[2] = { char('1' + i), '\0' };
+                clickSound();
                 drawKey(x, KB_Y, KEY_W, KEY_H, lbl, TFT_WHITE, COL_BG);
                 delay(KEY_FLASH_MS);
                 drawKey(x, KB_Y, KEY_W, KEY_H, lbl, COL_KEY_FACE, COL_KEY_LABEL);
@@ -1915,6 +1953,7 @@ void selectModel() {
         // Key 4 — Grok 4.1 Fast
         int x4 = 3 * KEY_W;
         if (inRect(sx, sy, x4, KB_Y, KEY_W, KEY_H)) {
+            clickSound();
             drawKey(x4, KB_Y, KEY_W, KEY_H, "4", TFT_WHITE, COL_BG);
             delay(KEY_FLASH_MS);
             drawKey(x4, KB_Y, KEY_W, KEY_H, "4", COL_KEY_FACE, COL_KEY_LABEL);
@@ -1945,6 +1984,7 @@ void selectModel() {
         // Key 5 — Groq GPT-OSS-120b
         int x5 = 4 * KEY_W;
         if (inRect(sx, sy, x5, KB_Y, KEY_W, KEY_H)) {
+            clickSound();
             drawKey(x5, KB_Y, KEY_W, KEY_H, "5", TFT_WHITE, COL_BG);
             delay(KEY_FLASH_MS);
             drawKey(x5, KB_Y, KEY_W, KEY_H, "5", COL_KEY_FACE, COL_KEY_LABEL);
@@ -1978,6 +2018,7 @@ void selectModel() {
             int row3Y   = KB_Y + 3 * rowStep;
             int xb      = 4 * KEY_W;
             if (inRect(sx, sy, xb, row3Y, KEY_W, KEY_H)) {
+                clickSound();
                 drawKey(xb, row3Y, KEY_W, KEY_H, "B", TFT_WHITE, COL_BG);
                 delay(KEY_FLASH_MS);
                 drawKey(xb, row3Y, KEY_W, KEY_H, "b", COL_KEY_FACE, COL_KEY_LABEL);
@@ -2090,6 +2131,7 @@ void setup() {
     while (ts.touched() && millis() - t0 < 500) delay(10);
 
     setupRGBLed();
+    setupSpeaker();
 
     // Boot splash at bottom; white area above it; "Connecting..." is the only text shown
     unsigned long splashStart = millis();
