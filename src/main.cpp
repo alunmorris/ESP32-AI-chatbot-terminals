@@ -188,10 +188,13 @@ void clearWifiPass(const char* ssid) {
 
 // --- Speaker ---
 #define SPEAKER_PIN    26
-#define SPK_CH          3   // LEDC channel for speaker
-#define SPK_VOLUME     8   // click duty cycle: 64/255 ≈ 25% of max
-#define SPK_CLICK_MS   1   // click tone duration ms
-void clickSound();          // forward declaration
+#define SPK_CH          3    // LEDC channel for speaker
+#define SPK_FREQ1      4000  // first click tone Hz
+#define SPK_FREQ2      400   // second click tone Hz
+#define SPK_VOLUME1    64   // first tone peak duty (0–255)
+#define SPK_VOLUME2    128   // second tone peak duty (0–255)
+#define SPK_CLICK_MS    10   // duration per tone ms (triangle envelope: ramp up then down)
+void clickSound();           // forward declaration
 
 // --- Screen dimensions ---
 #define SCREEN_W        320
@@ -267,6 +270,7 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 
 // --- Key appearance ---
 #define KEY_RADIUS        3     // rounded corner radius for keys
+#define KEY_INSET         1     // inset drawn box by this many px each side (~10% smaller)
 
 // --- Layout metrics ---
 #define LINE_H_LARGE     14     // DejaVuSansBold12px line height (yAdvance=13) + 1px gap
@@ -314,7 +318,8 @@ void fontOn()  { tft.loadFont(DejaVuSansBold12pxData); }
 void fontOff() { tft.unloadFont(); }
 
 void drawKey(int x, int y, int w, int h, const char* label, uint16_t face, uint16_t text) {
-    tft.fillRoundRect(x, y, w - 1, h, KEY_RADIUS, face);
+    tft.fillRect(x, y, w, h, COL_BG);  // clear cell; COL_BG shows as border around inset box
+    tft.fillRoundRect(x + KEY_INSET, y + KEY_INSET, w - 1 - 2*KEY_INSET, h - 2*KEY_INSET, KEY_RADIUS, face);
     tft.setTextColor(text, face);
     fontOn();
     int tx = x + (w - (int)tft.textWidth(label)) / 2;
@@ -1083,14 +1088,26 @@ void setupRGBLed() {
 
 // --- Speaker ---
 void setupSpeaker() {
-    ledcSetup(SPK_CH, 4000, 8);  // 4 kHz, 8-bit resolution
+    ledcSetup(SPK_CH, SPK_FREQ1, 8);
     ledcAttachPin(SPEAKER_PIN, SPK_CH);
     ledcWrite(SPK_CH, 0);        // silent
 }
 
+// Triangle-envelope click: duty ramps 0→peak→0 over SPK_CLICK_MS per tone (1ms steps)
 void clickSound() {
-    ledcWrite(SPK_CH, SPK_VOLUME);  // squarewave at configured volume
-    delay(SPK_CLICK_MS);
+    int steps = SPK_CLICK_MS / 2;
+    if (steps < 1) steps = 1;
+
+    // Tone 1
+    ledcSetup(SPK_CH, SPK_FREQ1, 8);
+    for (int i = 0; i <  steps; i++) { ledcWrite(SPK_CH, SPK_VOLUME1 * i / steps); delay(1); }
+    for (int i = steps; i >= 0; i--) { ledcWrite(SPK_CH, SPK_VOLUME1 * i / steps); delay(1); }
+
+    // Tone 2
+    ledcSetup(SPK_CH, SPK_FREQ2, 8);
+    for (int i = 0; i <  steps; i++) { ledcWrite(SPK_CH, SPK_VOLUME2 * i / steps); delay(1); }
+    for (int i = steps; i >= 0; i--) { ledcWrite(SPK_CH, SPK_VOLUME2 * i / steps); delay(1); }
+
     ledcWrite(SPK_CH, 0);        // silence
 }
 
@@ -1941,7 +1958,7 @@ void selectModel() {
                 } else {
                     tft.setTextSize(1);
                     tft.setTextColor(TFT_GREEN, bg);
-                    tft.setCursor(0,  0); tft.print("SLUG AI Chatbot v0.1");
+                    tft.setCursor(0,  0); tft.print("SLUG AI Chatbot v0.2");
                     tft.setCursor(0, 10); tft.print("Model: "); tft.print(GEMINI_MODEL);
                     tft.setTextColor(TFT_DARKGREY, bg);
                     tft.setCursor(0, 20); tft.print("Ready.");
