@@ -6,3 +6,6 @@ src/secrets.h
 
 # Windows zone identifier files
 *.Zone.Identifier
+
+# Git worktrees
+.worktrees/
