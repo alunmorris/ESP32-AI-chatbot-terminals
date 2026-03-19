@@ -33,7 +33,7 @@
 static int calXmin = 200, calXmax = 3900;
 static int calYmin = 200, calYmax = 3900;
 
-void loadTouchCal() {
+static void loadTouchCal() {
     Preferences p;
     p.begin("touch", true);
     if (p.getBool("valid", false) && p.getInt("orient", -1) == CAL_ORIENT) {
@@ -45,7 +45,7 @@ void loadTouchCal() {
     p.end();
 }
 
-void saveTouchCal() {
+static void saveTouchCal() {
     Preferences p;
     p.begin("touch", false);
     p.putInt("xmin", calXmin); p.putInt("xmax", calXmax);
@@ -155,6 +155,7 @@ void calibrateTouch() {
     while (!ts.touched()) delay(5);
     long sumX = 0, sumY = 0; int n = 0;
     while (ts.touched()) { TS_Point p = ts.getPoint(); sumX += p.x; sumY += p.y; n++; delay(5); }
+    if (n < 1) n = 1;
     int rx1 = sumX / n, ry1 = sumY / n;
 
     tft.fillScreen(0x0841);
@@ -164,6 +165,7 @@ void calibrateTouch() {
     while (!ts.touched()) delay(5);
     sumX = 0; sumY = 0; n = 0;
     while (ts.touched()) { TS_Point p = ts.getPoint(); sumX += p.x; sumY += p.y; n++; delay(5); }
+    if (n < 1) n = 1;
     int rx2 = sumX / n, ry2 = sumY / n;
 
     long dRx = rx2-rx1, dTx = T2X-T1X, dRy = ry2-ry1, dTy = T2Y-T1Y;
