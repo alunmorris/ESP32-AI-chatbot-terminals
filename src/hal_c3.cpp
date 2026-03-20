@@ -50,7 +50,7 @@ static NimBLEAddress loadBondedAddress(bool& found) {
     Preferences p;
     p.begin("ble_kb", true);
     found = p.getBool("bonded", false);
-    if (!found) { p.end(); return NimBLEAddress(""); }
+    if (!found) { p.end(); return NimBLEAddress(); }
     String addrStr = p.getString("addr", "");
     uint8_t type   = p.getUChar("type", 0);
     p.end();
@@ -133,7 +133,7 @@ static void hidNotifyCB(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, 
 
 // --- BLE client + reconnect ---
 static NimBLEClient*  bleClient   = nullptr;
-static NimBLEAddress  bondedAddr  = NimBLEAddress("");
+static NimBLEAddress  bondedAddr;
 static bool           hasBonded   = false;
 static volatile bool  connected   = false;
 
@@ -153,18 +153,24 @@ class ClientCB : public NimBLEClientCallbacks {
     void onDisconnect(NimBLEClient*, int) override {
         connected = false;
     }
+    // NimBLE 2.x: security callbacks are part of NimBLEClientCallbacks
+    void onPassKeyEntry(NimBLEConnInfo&) override {}   // accept "Just Works"
+    void onAuthenticationComplete(NimBLEConnInfo&) override {}
+    void onConfirmPasskey(NimBLEConnInfo& info, uint32_t) override {
+        NimBLEDevice::injectConfirmPasskey(info, true);
+    }
 };
 
 static bool subscribeHID(NimBLEClient* client) {
     NimBLERemoteService* svc = client->getService(HID_SVC_UUID);
     if (!svc) return false;
     // Subscribe to ALL HID Report characteristics (keyboard may have multiple)
-    auto chars = svc->getCharacteristics(true);
-    if (!chars) return false;  // null-check before dereference
+    // NimBLE 2.x: getCharacteristics() returns const std::vector<...>& (not a pointer)
+    const auto& chars = svc->getCharacteristics(true);
     bool ok = false;
-    for (auto& c : *chars) {
+    for (auto* c : chars) {
         if (c->getUUID() == HID_RPT_UUID) {
-            c->subscribe(hidNotifyCB, nullptr, true);
+            c->subscribe(true, hidNotifyCB, true);  // NimBLE 2.x arg order: (notify, cb, response)
             ok = true;
         }
     }
@@ -200,15 +206,7 @@ void halInit() {
 
     NimBLEDevice::init("");
     NimBLEDevice::setSecurityAuth(true, true, true);   // bonding, MITM, SC
-    // Concrete security callback subclass — accepts "Just Works" pairing
-    struct KB_SecCB : public NimBLESecurityCallbacks {
-        uint32_t onPassKeyRequest()                              override { return 0; }
-        void     onPassKeyNotify(uint32_t)                       override {}
-        bool     onSecurityRequest()                             override { return true; }
-        void     onAuthenticationComplete(NimBLEConnInfo& info)  override {}
-        bool     onConfirmPIN(uint32_t)                          override { return true; }
-    };
-    NimBLEDevice::setSecurityCallbacks(new KB_SecCB());
+    // NimBLE 2.x: security callbacks live in NimBLEClientCallbacks (see ClientCB above)
 
     // Try bonded address first
     bondedAddr = loadBondedAddress(hasBonded);
