@@ -673,11 +673,6 @@ void addMessage(bool isUser, bool isError, const char* text) {
     drawHistory();
 }
 
-// --- Key hit-test helpers ---
-bool inRect(int sx, int sy, int rx, int ry, int rw, int rh) {
-    return sx >= rx && sx < rx + rw && sy >= ry && sy < ry + rh;
-}
-
 // Show keyboard and let user type a password. Returns typed string in out (64 bytes).
 // Uses the existing keyboard (inputBuf/inputLen/shiftOn/altOn globals).
 // Tap the Send button area (input bar) to submit.
@@ -705,7 +700,7 @@ void enterPassword(const char* ssidPrompt, char* out) {
 
     while (true) {
         InputEvent ev;
-        if (!halPollInput(&ev)) continue;
+        if (!halPollInput(&ev)) { delay(10); continue; }
 
         switch (ev.type) {
             case INPUT_ENTER:
@@ -1565,9 +1560,7 @@ void selectModel() {
             tft.setTextSize(1); tft.setTextColor(TFT_DARKGREY, COL_BG);
             tft.setCursor(0, 0); tft.print("SLUG AI chatbot");
             tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
-#ifndef TARGET_C3
             drawKeyboard();
-#endif
             drawInputBar(); showModelChoices();
             continue;
         }

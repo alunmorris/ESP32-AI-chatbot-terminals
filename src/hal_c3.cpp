@@ -237,7 +237,6 @@ void halInit() {
 void halClickSound() {}
 void halSetLed(uint8_t, uint8_t, uint8_t) {}
 void halLoadTouchCal() {}
-void halWaitTap(int* sx, int* sy) { if (sx) *sx = -1; if (sy) *sy = -1; }
 void calibrateTouch() {}
 void pollKBHide() {}
 

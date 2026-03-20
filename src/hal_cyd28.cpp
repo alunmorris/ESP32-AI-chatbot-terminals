@@ -437,15 +437,6 @@ bool halPollInput(InputEvent* ev) {
     return false;
 }
 
-// halWaitTap: block until a touch occurs, then fill sx/sy with screen coords.
-void halWaitTap(int* sx, int* sy) {
-    while (!ts.touched()) delay(10);
-    TS_Point pt = ts.getPoint();
-    while (ts.touched()) delay(5);
-    lastTouchMs = millis();
-    mapTouch(pt, *sx, *sy);
-}
-
 // pollKBHide: used during blocking API wait on CYD28 to allow KB toggle.
 // Only called under #ifndef TARGET_C3 in main.cpp.
 void pollKBHide() {

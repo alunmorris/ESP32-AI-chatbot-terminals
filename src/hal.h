@@ -35,9 +35,6 @@ void halSetLed(uint8_t r, uint8_t g, uint8_t b);
 // Load touch calibration from NVS. No-op on C3.
 void halLoadTouchCal();
 
-// Blocking: wait for a touch, fill *sx/*sy with screen coords. No-op on C3 (sx=sy=-1).
-void halWaitTap(int* sx, int* sy);
-
 // CYD28-only: show touch calibration UI. No-op on C3.
 void calibrateTouch();
 
