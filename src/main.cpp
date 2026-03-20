@@ -35,7 +35,9 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+#ifndef TARGET_C3
 #include <ESP32Ping.h>
+#endif
 #include <Preferences.h>
 #include "hal.h"
 
@@ -167,7 +169,11 @@ void clearWifiPass(const char* ssid) {
 TFT_eSPI tft = TFT_eSPI();
 
 // --- Keyboard layout ---
+#ifdef TARGET_C3
+constexpr bool kbVisible = false;
+#else
 bool kbVisible = true;
+#endif
 bool shiftOn   = false;   // starts lowercase
 bool altOn     = false;   // alt layer off by default
 
@@ -259,6 +265,7 @@ void drawKey(int x, int y, int w, int h, const char* label, uint16_t face, uint1
     fontOff();           // restore GLCD for everything else
 }
 
+#ifndef TARGET_C3
 void drawKeyboard() {
     if (!kbVisible) return;
     tft.fillRect(0, KB_Y, SCREEN_W, KB_H, COL_BG);
@@ -321,6 +328,7 @@ void drawKeyboard() {
     drawKey(SPACE_X, row4Y, SPACE_W, KEY_H - 1, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
     drawKey(HIDE_X,  row4Y, HIDE_W,  KEY_H - 1, "Hide",  COL_BTN_BG, COL_BTN_TEXT);
 }
+#endif
 
 // --- AP picker screen ---
 #define AP_ROW_H  24   // height of each AP list row
@@ -400,6 +408,7 @@ void drawInputBar() {
     tft.print(moreMode ? "More" : "Send");
 
     // Show KB and New buttons (only when KB hidden)
+#ifndef TARGET_C3
     if (!kbVisible) {
         tft.fillRect(SCREEN_W - BTN_SHOWKB_X, barY + BTN_INSET, BTN_SHOWKB_W, barH - BTN_INSET*2, COL_BTN_BG);
         tft.setTextColor(COL_BTN_TEXT, COL_BTN_BG);
@@ -411,6 +420,7 @@ void drawInputBar() {
         tft.setCursor(SCREEN_W - BTN_NEW_X + 4, barY + (barH - 8) / 2);
         tft.print("New");
     }
+#endif
 }
 
 // --- Conversation history ---
@@ -677,7 +687,9 @@ void enterPassword(const char* ssidPrompt, char* out) {
     moreMode    = false;
     shiftOn     = false;
     altOn       = false;
+#ifndef TARGET_C3
     kbVisible   = true;
+#endif
 
     tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
     fontOff();
@@ -687,7 +699,9 @@ void enterPassword(const char* ssidPrompt, char* out) {
     tft.setTextColor(TFT_WHITE,  COL_BG);
     tft.setCursor(0, 10); tft.print(ssidPrompt);
     drawInputBar();
+#ifndef TARGET_C3
     drawKeyboard();
+#endif
 
     while (true) {
         InputEvent ev;
@@ -1016,7 +1030,9 @@ String callGemini(const char* prompt) {
             waitMsgIdx = (waitMsgIdx + 1) % NUM_WAIT_MSGS;
             nextMsgMs += 4000;
         }
+#ifndef TARGET_C3
         pollKBHide();
+#endif
         delay(10);
     }
     client.stop();
@@ -1128,7 +1144,9 @@ String callGrok(const char* prompt) {
             waitMsgIdx = (waitMsgIdx + 1) % NUM_WAIT_MSGS;
             nextMsgMs += 6000;
         }
+#ifndef TARGET_C3
         pollKBHide();
+#endif
         delay(10);
     }
     client.stop();
@@ -1281,7 +1299,9 @@ String callGroq(const char* prompt) {
             waitMsgIdx = (waitMsgIdx + 1) % NUM_WAIT_MSGS;
             nextMsgMs += 6000;
         }
+#ifndef TARGET_C3
         pollKBHide();
+#endif
         delay(10);
     }
     client.stop();
@@ -1350,7 +1370,9 @@ void sendPrompt() {
     }
     prompt[127] = '\0';
     moreMode = false;
+#ifndef TARGET_C3
     kbVisible = false;   // hide KB; drawHistory() covers the KB area
+#endif
     drawInputBar();      // clear full bar now — erases BS/Hide key remnants before API wait
 
     // Show user message and thinking indicator
@@ -1371,11 +1393,13 @@ void sendPrompt() {
     drawInputBar();
 }
 
+#ifndef TARGET_C3
 void drawCrosshair(int x, int y) {
     tft.drawLine(x - 18, y, x + 18, y, TFT_WHITE);
     tft.drawLine(x, y - 18, x, y + 18, TFT_WHITE);
     tft.drawCircle(x, y, 6, TFT_WHITE);
 }
+#endif
 
 // Slide the SLUG logo off to the right over 1 second
 void slideOutSlug() {
@@ -1583,6 +1607,7 @@ void selectModel() {
         }
 
         // Key C (ZXCVBNM row, index 2) — touch calibration
+#ifndef TARGET_C3
         {
             int rowStep = KEY_H + KEY_GAP;
             int row3Y   = KB_Y + 3 * rowStep;
@@ -1602,6 +1627,7 @@ void selectModel() {
                 showModelChoices();
             }
         }
+#endif
     }
 }
 
@@ -1609,6 +1635,7 @@ void setup() {
     loadWifiCreds();   // load NVS; shows AP picker on first boot if no credentials stored
     halLoadTouchCal(); // load saved touch calibration from NVS (or keep defaults)
 
+#ifndef TARGET_C3
     // Hold BOOT button (GPIO0) on power-on to wipe touch calibration back to defaults
     pinMode(0, INPUT_PULLUP);
     if (digitalRead(0) == LOW) {
@@ -1621,8 +1648,11 @@ void setup() {
         Serial.println("[Cal] Reset to defaults via BOOT button");
         delay(500);
     }
+#endif
     Serial.begin(115200);
+#ifndef TARGET_C3
     Serial.println("[Cal] Loaded touch calibration from NVS");
+#endif
     waitMsgIdx = random(NUM_WAIT_MSGS);
 
     // Display (init before backlight to avoid white flash)
@@ -1651,7 +1681,9 @@ void setup() {
         selectAP();  // scan → pick AP → enter password → connect; returns only on success
     }
 
+#ifndef TARGET_C3
     drawKeyboard();
+#endif
     drawInputBar();
 
     tft.setTextSize(1);
@@ -1668,7 +1700,11 @@ void checkWiFiHealth() {
     if (millis() - lastWiFiCheckMs < 3000) return;
     lastWiFiCheckMs = millis();
 
+#ifndef TARGET_C3
     bool ok = (WiFi.status() == WL_CONNECTED) && Ping.ping(IPAddress(8,8,8,8), 1);
+#else
+    bool ok = (WiFi.status() == WL_CONNECTED);
+#endif
 
     if (ok != wifiHealthy) {
         wifiHealthy = ok;
@@ -1712,9 +1748,14 @@ void loop() {
                 strncpy(history[historyCount].text, "[New chat]", 2047);
                 historyCount++;
                 rebuildLines();
+#ifndef TARGET_C3
                 kbVisible = true;
+#endif
                 tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
-                drawHistory(); drawInputBar(); drawKeyboard();
+                drawHistory(); drawInputBar();
+#ifndef TARGET_C3
+                drawKeyboard();
+#endif
                 break;
             case INPUT_ENTER:
                 sendPrompt();
