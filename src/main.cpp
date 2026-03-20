@@ -1592,10 +1592,20 @@ void setup() {
     waitMsgIdx = random(NUM_WAIT_MSGS);
     // Display (init before backlight to avoid white flash)
     tft.init();
-#ifdef ROTATE_180
-    tft.setRotation(3);
+#ifdef TARGET_C3
+    // ST7789 GRAM is 240col x 320row (portrait-native). Pre-fill all GRAM in
+    // rotation 0 (CASET 0..239, RASET 0..319 both valid) so that GRAM rows
+    // 240..319 contain COL_BG rather than power-on white. Without this, those
+    // rows map to a visible white strip in some landscape rotations.
+    tft.setRotation(0);
+    tft.fillScreen(COL_BG);  // writes all 240x320 GRAM cells
+    tft.setRotation(1);      // MX|MV landscape: correct physical orientation
 #else
-    tft.setRotation(1);
+    #ifdef ROTATE_180
+        tft.setRotation(3);
+    #else
+        tft.setRotation(1);
+    #endif
 #endif
     tft.fillScreen(COL_BG);
 

@@ -233,7 +233,7 @@ void halInit() {
         while (!connected) {
             scan->start(10, false);  // 10-second window, blocking
         }
-        tft.fillRect(0, 0, 320, 12, 0x0841);  // clear waiting message
+        tft.fillRect(0, 0, tft.width(), 12, 0x0841);  // clear waiting message
     }
 
     // Start reconnect background task
