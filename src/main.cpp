@@ -32,12 +32,12 @@
 #include "fonts/DejaVuSansBold8px.h"   // VLW smooth font 10px (Unicode)
 #include "images/splash.h"             // SLUG splash 320x117 RGB565
 #include "images/slugsmall.h"          // SLUGsmall 144x96 RGB565 with transparency
-#include <XPT2046_Touchscreen.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <ESP32Ping.h>
 #include <Preferences.h>
+#include "hal.h"
 
 // --- Credentials (kept out of version control) ---
 #include "secrets.h"  // copy secrets.h.example → secrets.h and fill in your keys
@@ -56,43 +56,6 @@ bool        invertDisplay     = false;  // true → light grey bg, black text in
 static char wifiSsid[WIFI_PREFS_MAX][33];  // SSID max 32 chars + null
 static char wifiPass[WIFI_PREFS_MAX][64];  // WPA2 password max 63 chars + null
 static int  wifiCredsCount = 0;
-
-// --- Touch calibration (NVS, namespace "touch") ---
-// ts.setRotation(3) handles the 180° axis inversion for ROTATE_180, so cal defaults are the same.
-static int calXmin = 200, calXmax = 3900;
-static int calYmin = 200, calYmax = 3900;
-
-// Calibration is tagged with the ts rotation used so mismatched calibrations are ignored.
-// ROTATE_180 uses ts rotation 3; normal uses ts rotation 1.
-#ifdef ROTATE_180
-  #define CAL_ORIENT 3
-#else
-  #define CAL_ORIENT 0
-#endif
-
-void loadTouchCal() {
-    Preferences p;
-    p.begin("touch", true);
-    if (p.getBool("valid", false) && p.getInt("orient", -1) == CAL_ORIENT) {
-        calXmin = p.getInt("xmin", calXmin);
-        calXmax = p.getInt("xmax", calXmax);
-        calYmin = p.getInt("ymin", calYmin);
-        calYmax = p.getInt("ymax", calYmax);
-    }
-    p.end();
-}
-
-void saveTouchCal() {
-    Preferences p;
-    p.begin("touch", false);
-    p.putInt("xmin", calXmin);
-    p.putInt("xmax", calXmax);
-    p.putInt("ymin", calYmin);
-    p.putInt("ymax", calYmax);
-    p.putInt("orient", CAL_ORIENT);
-    p.putBool("valid", true);
-    p.end();
-}
 
 void saveWifiCreds() {
     Preferences p;
@@ -170,32 +133,6 @@ void clearWifiPass(const char* ssid) {
     }
 }
 
-// --- Hardware pins ---
-#define TFT_BL          21
-#define TOUCH_SCLK      25
-#define TOUCH_MISO      39
-#define TOUCH_MOSI      32
-#define TOUCH_CS_PIN    33
-#define TOUCH_IRQ       36
-
-// --- RGB LED (active LOW, common anode to 3.3V) ---
-#define LED_R_PIN       4
-#define LED_G_PIN      16
-#define LED_B_PIN      17
-#define LED_R_CH        0   // LEDC channels
-#define LED_G_CH        1
-#define LED_B_CH        2
-
-// --- Speaker ---
-#define SPEAKER_PIN    26
-#define SPK_CH          3    // LEDC channel for speaker
-#define SPK_FREQ1      4000  // first click tone Hz
-#define SPK_FREQ2      400   // second click tone Hz
-#define SPK_VOLUME1    64   // first tone peak duty (0–255)
-#define SPK_VOLUME2    128   // second tone peak duty (0–255)
-#define SPK_CLICK_MS    10   // duration per tone ms (triangle envelope: ramp up then down)
-void clickSound();           // forward declaration
-
 // --- Screen dimensions ---
 #define SCREEN_W        320
 #define SCREEN_H        240
@@ -228,8 +165,6 @@ void clickSound();           // forward declaration
 
 // --- Objects ---
 TFT_eSPI tft = TFT_eSPI();
-SPIClass touchSPI(HSPI);
-XPT2046_Touchscreen ts(TOUCH_CS_PIN, TOUCH_IRQ);
 
 // --- Keyboard layout ---
 bool kbVisible = true;
@@ -299,10 +234,6 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define RSSI_THRESH_BLUE   -55    // ≥ this dBm → blue (strongest)
 #define RSSI_THRESH_CYAN   -65    // ≥ this dBm → cyan (good)
 #define RSSI_THRESH_GREEN  -75    // ≥ this dBm → green (fair)
-
-// --- LED PWM ---
-#define LED_PWM_FREQ     5000    // LEDC PWM frequency Hz
-#define LED_PWM_BITS        8    // LEDC resolution bits
 
 // --- API ---
 #define HTTPS_PORT        443
@@ -732,113 +663,14 @@ void addMessage(bool isUser, bool isError, const char* text) {
     drawHistory();
 }
 
-// --- Touch coordinate mapping ---
-// Raw XPT2046 range ~200–3900 → screen pixels
-void mapTouch(TS_Point& tp, int& sx, int& sy) {
-    sx = map(tp.x, calXmin, calXmax, 0, SCREEN_W - 1);
-    sy = map(tp.y, calYmin, calYmax, 0, SCREEN_H - 1);
-}
-
-// --- Debounce ---
-unsigned long lastTouchMs = 0;
-#define TOUCH_DEBOUNCE_MS 125
-#define SWIPE_THRESHOLD    15   // screen px of drag to register a scroll step
-
 // --- Key hit-test helpers ---
 bool inRect(int sx, int sy, int rx, int ry, int rw, int rh) {
     return sx >= rx && sx < rx + rw && sy >= ry && sy < ry + rh;
 }
 
-// Hit-test keyboard rows 0–3; flashes the key 100ms for feedback; returns string to append
-String typeKBKey(int sx, int sy) {
-    if (sy < KB_Y) return "";
-    int rowStep = KEY_H + KEY_GAP;
-    int rowIdx  = (sy - KB_Y) / rowStep;
-    int rowY    = KB_Y + rowIdx * rowStep;
-    if (sy >= rowY + KEY_H) return "";  // landed in gap between rows
-
-    int    kx  = -1, x;
-    String typed;
-    char   lbl[3] = {0};  // ASCII display label for flash (max 2 chars)
-
-    switch (rowIdx) {
-        case 0: {  // number / symbol / alt row
-            x = 0;
-            for (int i = 0; i < 10; i++, x += KEY_W) {
-                if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
-                    if (altOn) {
-                        typed = KB_NUM_ALT_TYPED[i];
-                        strncpy(lbl, KB_NUM_ALT_DISP[i], 2); lbl[2] = '\0';
-                    } else {
-                        const char* nums = shiftOn ? KB_NUM_SHIFTED : KB_NUM_UNSHIFTED;
-                        typed = String(nums[i]);
-                        lbl[0] = nums[i]; lbl[1] = '\0';
-                    }
-                    kx = x; break;
-                }
-            }
-            break;
-        }
-        case 1: {  // QWERTY
-            x = 0;
-            for (int i = 0; i < 10; i++, x += KEY_W) {
-                if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
-                    char c = shiftOn ? KB_ROW1[i] : (KB_ROW1[i] + 32);
-                    typed = String(c); lbl[0] = c; lbl[1] = '\0'; kx = x; break;
-                }
-            }
-            break;
-        }
-        case 2: {  // ASDFGHJKL + /
-            x = 0;
-            for (int i = 0; i < 9; i++, x += KEY_W) {
-                if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
-                    char c = shiftOn ? KB_ROW2[i] : (KB_ROW2[i] + 32);
-                    typed = String(c); lbl[0] = c; lbl[1] = '\0'; kx = x; break;
-                }
-            }
-            if (typed.length() == 0 && inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
-                const char* s = altOn ? "\\" : (shiftOn ? "?" : "/");
-                typed = String(s); strncpy(lbl, s, sizeof(lbl) - 1); kx = x;
-            }
-            break;
-        }
-        case 3: {  // ZXCVBNM + ,.  (shifted: <>  alt: [])
-            x = 0;
-            for (int i = 0; i < 7; i++, x += KEY_W) {
-                if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
-                    char c = shiftOn ? KB_ROW3[i] : (KB_ROW3[i] + 32);
-                    typed = String(c); lbl[0] = c; lbl[1] = '\0'; kx = x; break;
-                }
-            }
-            if (typed.length() == 0) {
-                const char unshifted[] = { ',', '.' };
-                const char shifted[]   = { '<', '>' };
-                const char alt_ext[]   = { '[', ']' };
-                const char* extras = altOn ? alt_ext : (shiftOn ? shifted : unshifted);
-                for (int i = 0; i < 2; i++, x += KEY_W) {
-                    if (inRect(sx, sy, x, rowY, KEY_W, KEY_H)) {
-                        typed = String(extras[i]); lbl[0] = extras[i]; lbl[1] = '\0'; kx = x; break;
-                    }
-                }
-            }
-            break;
-        }
-        // case 4: Shift/Alt/Space/Hide/BS — handled in handleTouch()
-    }
-
-    if (kx >= 0 && typed.length() > 0) {
-        clickSound();
-        drawKey(kx, rowY, KEY_W, KEY_H, lbl, TFT_WHITE, COL_BG);
-        delay(KEY_FLASH_MS);
-        drawKey(kx, rowY, KEY_W, KEY_H, lbl, COL_KEY_FACE, COL_KEY_LABEL);
-    }
-    return typed;
-}
-
 // Show keyboard and let user type a password. Returns typed string in out (64 bytes).
 // Uses the existing keyboard (inputBuf/inputLen/shiftOn/altOn globals).
-// Tap the input bar (Send button area) to submit.
+// Tap the Send button area (input bar) to submit.
 void enterPassword(const char* ssidPrompt, char* out) {
     inputBuf[0] = '\0';
     inputLen    = 0;
@@ -858,271 +690,44 @@ void enterPassword(const char* ssidPrompt, char* out) {
     drawKeyboard();
 
     while (true) {
-        if (!ts.touched()) continue;
-        TS_Point pt = ts.getPoint();
-        while (ts.touched()) delay(5);
-        int sx, sy;
-        mapTouch(pt, sx, sy);
+        InputEvent ev;
+        if (!halPollInput(&ev)) continue;
 
-        // Input bar tap → submit
-        if (sy >= IBAR_Y_KB_SHOW && sy < IBAR_Y_KB_SHOW + IBAR_H_KB_SHOW) {
-            strncpy(out, inputBuf, 63); out[63] = '\0';
-            inputBuf[0] = '\0'; inputLen = 0;   // clear sensitive data
-            return;
-        }
-
-        // Keyboard area
-        if (sy >= KB_Y) {
-            int bsY = SCREEN_H - BS_H;
-            // BS key
-            if (inRect(sx, sy, BS_X, bsY, BS_W, BS_H)) {
-                drawKey(BS_X, bsY, BS_W, BS_H, "<-", TFT_WHITE, COL_BTN_TEXT);
-                delay(KEY_FLASH_MS);
-                drawKey(BS_X, bsY, BS_W, BS_H, "<-", COL_BTN_BG, COL_BTN_TEXT);
-                if (inputLen > 0) { inputBuf[--inputLen] = '\0'; drawInputBar(); }
-                continue;
-            }
-            // Row 4: Shift, Alt, Space (Hide ignored during password entry)
-            int row4Y = KB_Y + 4 * (KEY_H + KEY_GAP) + 1;
-            if (sy >= row4Y && sy < row4Y + KEY_H - 1) {
-                if (inRect(sx, sy, SHIFT_X, row4Y, SHIFT_W, KEY_H - 1)) {
-                    shiftOn = !shiftOn; altOn = false; drawKeyboard();
-                } else if (inRect(sx, sy, ALT_X, row4Y, ALT_W, KEY_H - 1)) {
-                    altOn = !altOn; shiftOn = false; drawKeyboard();
-                } else if (inRect(sx, sy, SPACE_X, row4Y, SPACE_W, KEY_H - 1)) {
-                    if (inputLen < 63) {
-                        inputBuf[inputLen++] = ' '; inputBuf[inputLen] = '\0';
-                        drawInputBar();
-                    }
-                }
-                continue;
-            }
-            // Character keys
-            String typed = typeKBKey(sx, sy);
-            if (typed.length() > 0) {
-                int addLen = typed.length();
-                if (inputLen + addLen <= 63) {
-                    memcpy(inputBuf + inputLen, typed.c_str(), addLen);
-                    inputLen += addLen;
-                    inputBuf[inputLen] = '\0';
+        switch (ev.type) {
+            case INPUT_ENTER:
+                strncpy(out, inputBuf, 63); out[63] = '\0';
+                inputBuf[0] = '\0'; inputLen = 0;   // clear sensitive data
+                return;
+            case INPUT_CHAR:
+                if (inputLen < 63) {
+                    inputBuf[inputLen++] = ev.ch;
+                    inputBuf[inputLen]   = '\0';
                     drawInputBar();
                 }
-            }
+                break;
+            case INPUT_BACKSPACE:
+                if (inputLen > 0) { inputBuf[--inputLen] = '\0'; drawInputBar(); }
+                break;
+            default:
+                break;
         }
     }
 }
 
 void sendPrompt();  // forward declaration — defined after callGemini()
 
-void handleTouch() {
-    if (!ts.touched()) return;
-    if (millis() - lastTouchMs < TOUCH_DEBOUNCE_MS) {
-        while (ts.touched()) delay(10);
-        return;
-    }
-
-    // Sample start position; track through release to get end position for swipe
-    TS_Point startPt = ts.getPoint();
-    TS_Point endPt   = startPt;
-    while (ts.touched()) {
-        endPt = ts.getPoint();
-        delay(5);
-    }
-    lastTouchMs = millis();
-
-    int sx, sy;
-    mapTouch(startPt, sx, sy);
-    if (sx < 0 || sy < 0 || sx >= SCREEN_W || sy >= SCREEN_H) return;
-
-    // --- History area: swipe up/down to scroll ---
-    int histH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
-    if (sy < histH) {
-        int ex, ey;
-        mapTouch(endPt, ex, ey);
-        int deltaY = ey - sy;
-        if (abs(deltaY) >= SWIPE_THRESHOLD) {
-            int steps     = max(1, abs(deltaY) / 10);
-            int lineH     = largeFont ? LINE_H_LARGE : LINE_H_SMALL;
-            int maxVis    = histH / lineH;
-            int maxScroll = max(0, lineCount - maxVis);
-            if (deltaY > 0) {   // swipe down → older
-                scrollOffset = min(scrollOffset + steps, maxScroll);
-            } else {            // swipe up → newer
-                scrollOffset = max(0, scrollOffset - steps);
-            }
-            drawHistory();
-        }
-        return;
-    }
-
-    int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
-    int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
-
-    // --- Input bar ---
-    if (sy >= barY && sy < barY + barH) {
-        // When KB is hidden, check New before Send — New sits adjacent to Send and
-        // touch imprecision can cause taps aimed at New to register in the Send zone.
-        if (!kbVisible && sx >= SCREEN_W - BTN_NEW_X && sx < SCREEN_W - BTN_SEND_W + 4) {
-            // New button → clear history, add marker, show KB
-            historyCount = 0;
-            lineCount    = 0;
-            scrollOffset = 0;
-            moreMode     = false;
-            inputBuf[0]  = '\0';
-            inputLen     = 0;
-            // Add [New chat] as a display-only marker (never sent to AI)
-            history[historyCount].isUser      = true;
-            history[historyCount].isError     = false;
-            history[historyCount].displayOnly = true;
-            strncpy(history[historyCount].text, "[New chat]", 2047);
-            historyCount++;
-            rebuildLines();
-            kbVisible    = true;
-            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
-            drawHistory();
-            drawInputBar();
-            drawKeyboard();
-        } else if (sx >= SCREEN_W - BTN_SEND_W) {
-            // Send/More button
-            sendPrompt();
-        } else if (kbVisible) {
-            // Tap text area with KB shown → backspace
-            if (inputLen > 0) {
-                clickSound();
-                inputBuf[--inputLen] = '\0';
-                if (inputLen == 0 && historyCount > 0) moreMode = true;
-                drawInputBar();
-            }
-        } else {
-            // KB hidden → show it
-            kbVisible = true;
-            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
-            drawHistory();
-            drawInputBar();
-            drawKeyboard();
-        }
-        return;
-    }
-
-    // --- Keyboard area ---
-    if (kbVisible && sy >= KB_Y) {
-        int rowStep = KEY_H + KEY_GAP;
-        int row4Y   = KB_Y + 4 * rowStep + 1;
-
-        // BS — tall key at bottom left, spans row 3/4 area
-        int bsY = SCREEN_H - BS_H;
-        if (inRect(sx, sy, BS_X, bsY, BS_W, BS_H)) {
-            clickSound();
-            drawKey(BS_X, bsY, BS_W, BS_H, "<-", TFT_WHITE, COL_BTN_TEXT);
-            delay(KEY_FLASH_MS);
-            drawKey(BS_X, bsY, BS_W, BS_H, "<-", COL_BTN_BG, COL_BTN_TEXT);
-            if (inputLen > 0) {
-                inputBuf[--inputLen] = '\0';
-                if (inputLen == 0 && historyCount > 0) moreMode = true;
-                drawInputBar();
-            }
-            return;
-        }
-
-        // Row 4 special keys
-        if (sy >= row4Y && sy < row4Y + KEY_H - 1) {
-            if (inRect(sx, sy, SHIFT_X, row4Y, SHIFT_W, KEY_H - 1)) {
-                clickSound();
-                shiftOn = !shiftOn;
-                if (shiftOn) altOn = false;
-                drawKeyboard();
-            } else if (inRect(sx, sy, ALT_X, row4Y, ALT_W, KEY_H - 1)) {
-                clickSound();
-                altOn = !altOn;
-                if (altOn) shiftOn = false;
-                drawKeyboard();
-            } else if (inRect(sx, sy, SPACE_X, row4Y, SPACE_W, KEY_H - 1)) {
-                clickSound();
-                drawKey(SPACE_X, row4Y, SPACE_W, KEY_H - 1, "SPACE", TFT_WHITE, COL_BG);
-                delay(KEY_FLASH_MS);
-                drawKey(SPACE_X, row4Y, SPACE_W, KEY_H - 1, "SPACE", COL_BTN_BG, COL_BTN_TEXT);
-                if (inputLen < INPUT_MAX_LEN) { moreMode = false; inputBuf[inputLen++] = ' '; inputBuf[inputLen] = '\0'; drawInputBar(); }
-            } else if (inRect(sx, sy, HIDE_X, row4Y, HIDE_W, KEY_H - 1)) {
-                kbVisible = false;
-                tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
-                drawHistory();
-                drawInputBar();
-            }
-            return;
-        }
-
-        // Character keys (rows 0–3): numbers, letters, ,./  (shifted: <>?  alt: []\)
-        String typed = typeKBKey(sx, sy);
-        if (typed.length() > 0) {
-            int addLen = typed.length();
-            if (inputLen + addLen <= INPUT_MAX_LEN) {
-                moreMode = false;
-                memcpy(inputBuf + inputLen, typed.c_str(), addLen);
-                inputLen += addLen;
-                inputBuf[inputLen] = '\0';
-                drawInputBar();
-            }
-        }
-        return;
-    }
-
-}
-
-// --- RGB LED ---
-void setRGBLed(uint8_t r, uint8_t g, uint8_t b) {
-    // Active LOW: invert each channel
-    ledcWrite(LED_R_CH, 255 - r);
-    ledcWrite(LED_G_CH, 255 - g);
-    ledcWrite(LED_B_CH, 255 - b);
-}
-
-void setupRGBLed() {
-    ledcSetup(LED_R_CH, LED_PWM_FREQ, LED_PWM_BITS);
-    ledcSetup(LED_G_CH, LED_PWM_FREQ, LED_PWM_BITS);
-    ledcSetup(LED_B_CH, LED_PWM_FREQ, LED_PWM_BITS);
-    ledcAttachPin(LED_R_PIN, LED_R_CH);
-    ledcAttachPin(LED_G_PIN, LED_G_CH);
-    ledcAttachPin(LED_B_PIN, LED_B_CH);
-    setRGBLed(0, 0, 0);  // off at start
-}
-
-// --- Speaker ---
-void setupSpeaker() {
-    ledcSetup(SPK_CH, SPK_FREQ1, 8);
-    ledcAttachPin(SPEAKER_PIN, SPK_CH);
-    ledcWrite(SPK_CH, 0);        // silent
-}
-
-// Triangle-envelope click: duty ramps 0→peak→0 over SPK_CLICK_MS per tone (1ms steps)
-void clickSound() {
-    int steps = SPK_CLICK_MS / 2;
-    if (steps < 1) steps = 1;
-
-    // Tone 1
-    ledcSetup(SPK_CH, SPK_FREQ1, 8);
-    for (int i = 0; i <  steps; i++) { ledcWrite(SPK_CH, SPK_VOLUME1 * i / steps); delay(1); }
-    for (int i = steps; i >= 0; i--) { ledcWrite(SPK_CH, SPK_VOLUME1 * i / steps); delay(1); }
-
-    // Tone 2
-    ledcSetup(SPK_CH, SPK_FREQ2, 8);
-    for (int i = 0; i <  steps; i++) { ledcWrite(SPK_CH, SPK_VOLUME2 * i / steps); delay(1); }
-    for (int i = steps; i >= 0; i--) { ledcWrite(SPK_CH, SPK_VOLUME2 * i / steps); delay(1); }
-
-    ledcWrite(SPK_CH, 0);        // silence
-}
-
 // Set LED colour based on WiFi RSSI (called after every health check)
 // Blue ≥-55  Cyan ≥-65  Green ≥-75  Orange=weak-but-connected  Red=lost
 void updateLedWifi() {
     if (WiFi.status() != WL_CONNECTED) {
-        setRGBLed(255, 0, 0);   // Red: WiFi lost
+        halSetLed(255, 0, 0);   // Red: WiFi lost
         return;
     }
     int rssi = WiFi.RSSI();
-    if      (rssi >= RSSI_THRESH_BLUE)  setRGBLed(  0,   0, 255);  // Blue:   strongest
-    else if (rssi >= RSSI_THRESH_CYAN)  setRGBLed(  0, 255, 255);  // Cyan:   good
-    else if (rssi >= RSSI_THRESH_GREEN) setRGBLed(  0, 255,   0);  // Green:  fair
-    else                  setRGBLed(255, 128,   0);  // Orange: weak
+    if      (rssi >= RSSI_THRESH_BLUE)  halSetLed(  0,   0, 255);  // Blue:   strongest
+    else if (rssi >= RSSI_THRESH_CYAN)  halSetLed(  0, 255, 255);  // Cyan:   good
+    else if (rssi >= RSSI_THRESH_GREEN) halSetLed(  0, 255,   0);  // Green:  fair
+    else                  halSetLed(255, 128,   0);  // Orange: weak
 }
 
 // --- WiFi ---
@@ -1163,8 +768,7 @@ void selectAP() {
         if (n <= 0) {
             tft.fillScreen(COL_BG);
             tft.setCursor(0, 0); tft.print("No networks found. Tap to retry.");
-            while (!ts.touched()) delay(50);
-            while (ts.touched()) delay(5);
+            { int _sx, _sy; halWaitTap(&_sx, &_sy); }
             continue;
         }
 
@@ -1195,11 +799,7 @@ void selectAP() {
         // --- Wait for AP selection ---
         int selected = -1;
         while (selected < 0) {
-            if (!ts.touched()) continue;
-            TS_Point pt = ts.getPoint();
-            while (ts.touched()) delay(5);
-            int sx, sy;
-            mapTouch(pt, sx, sy);
+            int sx, sy; halWaitTap(&sx, &sy);
             for (int i = 0; i < apCount; i++) {
                 int rowY = AP_ROW_H * (i + 1);
                 if (sy >= rowY && sy < rowY + AP_ROW_H) { selected = i; break; }
@@ -1251,10 +851,7 @@ void selectAP() {
             // Wait for tap on row 1 or 2
             int choice = 0;
             while (choice == 0) {
-                if (!ts.touched()) continue;
-                TS_Point pt = ts.getPoint();
-                while (ts.touched()) delay(5);
-                int sx, sy; mapTouch(pt, sx, sy);
+                int sx, sy; halWaitTap(&sx, &sy);
                 if (sy >= AP_ROW_H && sy < AP_ROW_H * 2) choice = 1;  // re-enter
                 if (sy >= AP_ROW_H * 2 && sy < AP_ROW_H * 3) choice = 2;  // new scan
             }
@@ -1337,37 +934,6 @@ void showWaiting(const char* msg) {
     tft.loadFont(DejaVuSansBold8pxData);
     tft.drawString(msg, 2, barY + (barH - LINE_H_SMALL) / 2);
     tft.unloadFont();
-}
-
-// Handle Hide / Show KB tap during blocking API wait
-void pollKBHide() {
-    if (!ts.touched()) return;
-    TS_Point pt = ts.getPoint();
-    while (ts.touched()) delay(5);
-    lastTouchMs = millis();
-    int sx, sy;
-    mapTouch(pt, sx, sy);
-    if (sx < 0 || sy < 0 || sx >= SCREEN_W || sy >= SCREEN_H) return;
-
-    if (kbVisible) {
-        int row4Y = KB_Y + 4 * (KEY_H + KEY_GAP) + 1;
-        if (inRect(sx, sy, HIDE_X, row4Y, HIDE_W, KEY_H - 1)) {
-            kbVisible = false;
-            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
-            drawHistory();
-            drawInputBar();
-        }
-    } else {
-        int barY = IBAR_Y_KB_HIDE;
-        int barH = IBAR_H_KB_HIDE;
-        if (inRect(sx, sy, SCREEN_W - BTN_SHOWKB_X, barY + BTN_INSET, BTN_SHOWKB_W, barH - BTN_INSET*2)) {
-            kbVisible = true;
-            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
-            drawHistory();
-            drawInputBar();
-            drawKeyboard();
-        }
-    }
 }
 
 // --- Gemini API call ---
@@ -1811,63 +1377,6 @@ void drawCrosshair(int x, int y) {
     tft.drawCircle(x, y, 6, TFT_WHITE);
 }
 
-void calibrateTouch() {
-    const int T1X = 20,           T1Y = 20;
-    const int T2X = SCREEN_W - 20, T2Y = SCREEN_H - 20;
-
-    tft.fillScreen(COL_BG);
-    tft.setTextSize(1);
-    tft.setTextColor(TFT_WHITE, COL_BG);
-
-    // Flush any spurious touches
-    while (ts.touched()) delay(5);
-    delay(200);
-
-    // --- Point 1: top-left ---
-    drawCrosshair(T1X, T1Y);
-    tft.setCursor(60, 110); tft.print("Tap the crosshair");
-
-    while (!ts.touched()) delay(5);
-    long sumX = 0, sumY = 0; int n = 0;
-    while (ts.touched()) {
-        TS_Point p = ts.getPoint();
-        sumX += p.x; sumY += p.y; n++;
-        delay(5);
-    }
-    int rx1 = sumX / n, ry1 = sumY / n;
-
-    // --- Point 2: bottom-right ---
-    tft.fillScreen(COL_BG);
-    drawCrosshair(T2X, T2Y);
-    tft.setCursor(60, 110); tft.print("Tap the crosshair");
-
-    delay(300);
-    while (!ts.touched()) delay(5);
-    sumX = 0; sumY = 0; n = 0;
-    while (ts.touched()) {
-        TS_Point p = ts.getPoint();
-        sumX += p.x; sumY += p.y; n++;
-        delay(5);
-    }
-    int rx2 = sumX / n, ry2 = sumY / n;
-
-    // Extrapolate raw values to screen edges (0 and SCREEN_W/H - 1)
-    long dRx = rx2 - rx1, dTx = T2X - T1X;
-    long dRy = ry2 - ry1, dTy = T2Y - T1Y;
-    calXmin = (int)(rx1 - dRx * T1X / dTx);
-    calXmax = (int)(rx2 + dRx * (SCREEN_W - 1 - T2X) / dTx);
-    calYmin = (int)(ry1 - dRy * T1Y / dTy);
-    calYmax = (int)(ry2 + dRy * (SCREEN_H - 1 - T2Y) / dTy);
-
-    saveTouchCal();
-    Serial.printf("[Cal] xmin=%d xmax=%d ymin=%d ymax=%d\n", calXmin, calXmax, calYmin, calYmax);
-
-    tft.fillScreen(COL_BG);
-    tft.setTextColor(TFT_GREEN, COL_BG);
-    tft.setCursor(60, 110); tft.print("Calibration saved!");
-    delay(1500);
-}
-
 // Slide the SLUG logo off to the right over 1 second
 void slideOutSlug() {
     const int    imgX0 = SCREEN_W - SLUGSMALL_W;   // 176
@@ -1924,18 +1433,14 @@ void selectModel() {
     showModelChoices();
 
     while (true) {
-        if (!ts.touched()) continue;
-        TS_Point pt = ts.getPoint();
-        while (ts.touched()) delay(5);
-        int sx, sy;
-        mapTouch(pt, sx, sy);
+        int sx, sy; halWaitTap(&sx, &sy);
 
         // Hit-test keys 1, 2, 3 (Gemini models)
         int x = 0;
         for (int i = 0; i < 3; i++, x += KEY_W) {
             if (inRect(sx, sy, x, KB_Y, KEY_W, KEY_H)) {
                 char lbl[2] = { char('1' + i), '\0' };
-                clickSound();
+                halClickSound();
                 drawKey(x, KB_Y, KEY_W, KEY_H, lbl, TFT_WHITE, COL_BG);
                 delay(KEY_FLASH_MS);
                 drawKey(x, KB_Y, KEY_W, KEY_H, lbl, COL_KEY_FACE, COL_KEY_LABEL);
@@ -1970,7 +1475,7 @@ void selectModel() {
         // Key 4 — Grok 4.1 Fast
         int x4 = 3 * KEY_W;
         if (inRect(sx, sy, x4, KB_Y, KEY_W, KEY_H)) {
-            clickSound();
+            halClickSound();
             drawKey(x4, KB_Y, KEY_W, KEY_H, "4", TFT_WHITE, COL_BG);
             delay(KEY_FLASH_MS);
             drawKey(x4, KB_Y, KEY_W, KEY_H, "4", COL_KEY_FACE, COL_KEY_LABEL);
@@ -2001,7 +1506,7 @@ void selectModel() {
         // Key 5 — Groq GPT-OSS-120b
         int x5 = 4 * KEY_W;
         if (inRect(sx, sy, x5, KB_Y, KEY_W, KEY_H)) {
-            clickSound();
+            halClickSound();
             drawKey(x5, KB_Y, KEY_W, KEY_H, "5", TFT_WHITE, COL_BG);
             delay(KEY_FLASH_MS);
             drawKey(x5, KB_Y, KEY_W, KEY_H, "5", COL_KEY_FACE, COL_KEY_LABEL);
@@ -2035,7 +1540,7 @@ void selectModel() {
             int row3Y   = KB_Y + 3 * rowStep;
             int xb      = 4 * KEY_W;
             if (inRect(sx, sy, xb, row3Y, KEY_W, KEY_H)) {
-                clickSound();
+                halClickSound();
                 drawKey(xb, row3Y, KEY_W, KEY_H, "B", TFT_WHITE, COL_BG);
                 delay(KEY_FLASH_MS);
                 drawKey(xb, row3Y, KEY_W, KEY_H, "b", COL_KEY_FACE, COL_KEY_LABEL);
@@ -2102,7 +1607,7 @@ void selectModel() {
 
 void setup() {
     loadWifiCreds();   // load NVS; shows AP picker on first boot if no credentials stored
-    loadTouchCal();    // load saved touch calibration from NVS (or keep defaults)
+    halLoadTouchCal(); // load saved touch calibration from NVS (or keep defaults)
 
     // Hold BOOT button (GPIO0) on power-on to wipe touch calibration back to defaults
     pinMode(0, INPUT_PULLUP);
@@ -2112,13 +1617,12 @@ void setup() {
         p.remove("valid");
         p.remove("orient");
         p.end();
-        calXmin = 200; calXmax = 3900; calYmin = 200; calYmax = 3900;
         Serial.begin(115200);
         Serial.println("[Cal] Reset to defaults via BOOT button");
         delay(500);
     }
     Serial.begin(115200);
-    Serial.printf("[Cal] xmin=%d xmax=%d ymin=%d ymax=%d\n", calXmin, calXmax, calYmin, calYmax);
+    Serial.println("[Cal] Loaded touch calibration from NVS");
     waitMsgIdx = random(NUM_WAIT_MSGS);
 
     // Display (init before backlight to avoid white flash)
@@ -2130,25 +1634,8 @@ void setup() {
 #endif
     tft.fillScreen(COL_BG);
 
-    // Backlight on after screen is ready
-    pinMode(TFT_BL, OUTPUT);
-    digitalWrite(TFT_BL, HIGH);
-
-    // Touch
-    touchSPI.begin(TOUCH_SCLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS_PIN);
-    ts.begin(touchSPI);
-#ifdef ROTATE_180
-    ts.setRotation(3);  // 180°: xraw = 4095-x, yraw = 4095-y; keeps same cal defaults (200/3900)
-#else
-    ts.setRotation(1);  // landscape USB-right: xraw = x, yraw = y
-#endif
-
-    // Drain spurious startup touch
-    unsigned long t0 = millis();
-    while (ts.touched() && millis() - t0 < 500) delay(10);
-
-    setupRGBLed();
-    setupSpeaker();
+    // Hardware init (backlight, touch, LED, speaker) — delegated to HAL
+    halInit();
 
     // Boot splash at bottom; white area above it; "Connecting..." is the only text shown
     unsigned long splashStart = millis();
@@ -2196,6 +1683,61 @@ void checkWiFiHealth() {
 }
 
 void loop() {
-    handleTouch();
+    InputEvent ev;
+    if (halPollInput(&ev)) {
+        switch (ev.type) {
+            case INPUT_SCROLL_UP: {
+                int lineH     = largeFont ? LINE_H_LARGE : LINE_H_SMALL;
+                int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
+                int maxVis    = histH / lineH;
+                scrollOffset  = max(0, scrollOffset - 1);
+                drawHistory();
+                break;
+            }
+            case INPUT_SCROLL_DOWN: {
+                int lineH     = largeFont ? LINE_H_LARGE : LINE_H_SMALL;
+                int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
+                int maxVis    = histH / lineH;
+                int maxScroll = max(0, lineCount - maxVis);
+                scrollOffset  = min(scrollOffset + 1, maxScroll);
+                drawHistory();
+                break;
+            }
+            case INPUT_NEW_CONV:
+                historyCount = 0; lineCount = 0; scrollOffset = 0;
+                moreMode = false; inputBuf[0] = '\0'; inputLen = 0;
+                history[historyCount].isUser = true;
+                history[historyCount].isError = false;
+                history[historyCount].displayOnly = true;
+                strncpy(history[historyCount].text, "[New chat]", 2047);
+                historyCount++;
+                rebuildLines();
+                kbVisible = true;
+                tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
+                drawHistory(); drawInputBar(); drawKeyboard();
+                break;
+            case INPUT_ENTER:
+                sendPrompt();
+                break;
+            case INPUT_BACKSPACE:
+                if (inputLen > 0) {
+                    halClickSound();
+                    inputBuf[--inputLen] = '\0';
+                    if (inputLen == 0 && historyCount > 0) moreMode = true;
+                    drawInputBar();
+                }
+                break;
+            case INPUT_CHAR:
+                if (ev.ch != 0 && inputLen < INPUT_MAX_LEN) {
+                    moreMode = false;
+                    inputBuf[inputLen++] = ev.ch;
+                    inputBuf[inputLen]   = '\0';
+                    drawInputBar();
+                }
+                break;
+            default:
+                break;
+        }
+    }
     checkWiFiHealth();
 }
