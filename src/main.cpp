@@ -782,7 +782,7 @@ void selectAP() {
         if (n <= 0) {
             tft.fillScreen(COL_BG);
             tft.setCursor(0, 0); tft.print("No networks found. Tap to retry.");
-            { int _sx, _sy; halWaitTap(&_sx, &_sy); }
+            { InputEvent ev; while (!halPollInput(&ev)) delay(10); }
             continue;
         }
 
@@ -813,10 +813,11 @@ void selectAP() {
         // --- Wait for AP selection ---
         int selected = -1;
         while (selected < 0) {
-            int sx, sy; halWaitTap(&sx, &sy);
-            for (int i = 0; i < apCount; i++) {
-                int rowY = AP_ROW_H * (i + 1);
-                if (sy >= rowY && sy < rowY + AP_ROW_H) { selected = i; break; }
+            InputEvent ev;
+            if (!halPollInput(&ev)) { delay(10); continue; }
+            if (ev.type == INPUT_CHAR && ev.ch >= '1' && ev.ch <= '9') {
+                int idx = ev.ch - '1';
+                if (idx < apCount) selected = idx;
             }
         }
 
@@ -862,12 +863,13 @@ void selectAP() {
                 tft.print(opts[i]);
             }
 
-            // Wait for tap on row 1 or 2
+            // Wait for key 1 or 2
             int choice = 0;
             while (choice == 0) {
-                int sx, sy; halWaitTap(&sx, &sy);
-                if (sy >= AP_ROW_H && sy < AP_ROW_H * 2) choice = 1;  // re-enter
-                if (sy >= AP_ROW_H * 2 && sy < AP_ROW_H * 3) choice = 2;  // new scan
+                InputEvent ev;
+                if (!halPollInput(&ev)) { delay(10); continue; }
+                if (ev.type == INPUT_CHAR && ev.ch == '1') choice = 1;
+                if (ev.type == INPUT_CHAR && ev.ch == '2') choice = 2;
             }
 
             if (choice == 2) break;  // break inner loop → outer re-scan loop
@@ -1457,55 +1459,43 @@ void selectModel() {
     showModelChoices();
 
     while (true) {
-        int sx, sy; halWaitTap(&sx, &sy);
+        InputEvent ev;
+        if (!halPollInput(&ev)) { delay(10); continue; }
+        if (ev.type != INPUT_CHAR) continue;
+        char ch = ev.ch;
 
-        // Hit-test keys 1, 2, 3 (Gemini models)
-        int x = 0;
-        for (int i = 0; i < 3; i++, x += KEY_W) {
-            if (inRect(sx, sy, x, KB_Y, KEY_W, KEY_H)) {
-                char lbl[2] = { char('1' + i), '\0' };
-                halClickSound();
-                drawKey(x, KB_Y, KEY_W, KEY_H, lbl, TFT_WHITE, COL_BG);
-                delay(KEY_FLASH_MS);
-                drawKey(x, KB_Y, KEY_W, KEY_H, lbl, COL_KEY_FACE, COL_KEY_LABEL);
-                slideOutSlug();
-                strncpy(GEMINI_MODEL, modelIds[i], 47);
-                GEMINI_MODEL[47] = '\0';
-                geminiUseGlobal  = modelGlobal[i];
-                useGrok          = false;
-                useGroq          = false;
-                uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-                tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
-                if (largeFont) {
-                    fontOn();
-                    tft.setTextColor(TFT_GREEN, bg);
-                    tft.drawString("SLUG AI chatbot", 0, 0);
-                    tft.drawString(GEMINI_MODEL, 0, LINE_H_LARGE);
-                    tft.setTextColor(TFT_DARKGREY, bg);
-                    tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
-                    fontOff();
-                } else {
-                    tft.setTextSize(1);
-                    tft.setTextColor(TFT_GREEN, bg);
-                    tft.setCursor(0,  0); tft.print("SLUG AI Chatbot v0.2");
-                    tft.setCursor(0, 10); tft.print("Model: "); tft.print(GEMINI_MODEL);
-                    tft.setTextColor(TFT_DARKGREY, bg);
-                    tft.setCursor(0, 20); tft.print("Ready.");
-                }
-                return;
-            }
-        }
-
-        // Key 4 — Grok 4.1 Fast
-        int x4 = 3 * KEY_W;
-        if (inRect(sx, sy, x4, KB_Y, KEY_W, KEY_H)) {
+        // Models 1–3 (Gemini)
+        if (ch >= '1' && ch <= '3') {
+            int i = ch - '1';
             halClickSound();
-            drawKey(x4, KB_Y, KEY_W, KEY_H, "4", TFT_WHITE, COL_BG);
-            delay(KEY_FLASH_MS);
-            drawKey(x4, KB_Y, KEY_W, KEY_H, "4", COL_KEY_FACE, COL_KEY_LABEL);
             slideOutSlug();
-            useGrok = true;
-            useGroq = false;
+            strncpy(GEMINI_MODEL, modelIds[i], 47); GEMINI_MODEL[47] = '\0';
+            geminiUseGlobal = modelGlobal[i];
+            useGrok = false; useGroq = false;
+            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+            tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
+            if (largeFont) {
+                fontOn();
+                tft.setTextColor(TFT_GREEN, bg);
+                tft.drawString("SLUG AI chatbot", 0, 0);
+                tft.drawString(GEMINI_MODEL, 0, LINE_H_LARGE);
+                tft.setTextColor(TFT_DARKGREY, bg);
+                tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
+                fontOff();
+            } else {
+                tft.setTextSize(1);
+                tft.setTextColor(TFT_GREEN, bg);
+                tft.setCursor(0,  0); tft.print("SLUG AI Chatbot v0.2");
+                tft.setCursor(0, 10); tft.print("Model: "); tft.print(GEMINI_MODEL);
+                tft.setTextColor(TFT_DARKGREY, bg);
+                tft.setCursor(0, 20); tft.print("Ready.");
+            }
+            return;
+        }
+        if (ch == '4') {
+            halClickSound();
+            slideOutSlug();
+            useGrok = true; useGroq = false;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
             if (largeFont) {
@@ -1526,17 +1516,10 @@ void selectModel() {
             }
             return;
         }
-
-        // Key 5 — Groq GPT-OSS-120b
-        int x5 = 4 * KEY_W;
-        if (inRect(sx, sy, x5, KB_Y, KEY_W, KEY_H)) {
+        if (ch == '5') {
             halClickSound();
-            drawKey(x5, KB_Y, KEY_W, KEY_H, "5", TFT_WHITE, COL_BG);
-            delay(KEY_FLASH_MS);
-            drawKey(x5, KB_Y, KEY_W, KEY_H, "5", COL_KEY_FACE, COL_KEY_LABEL);
             slideOutSlug();
-            useGroq = true;
-            useGrok = false;
+            useGroq = true; useGrok = false;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
             if (largeFont) {
@@ -1557,75 +1540,36 @@ void selectModel() {
             }
             return;
         }
-
-        // Key B (ZXCVBNM row, index 4) — toggle large text, re-show choices
-        if (!largeFont) {
-            int rowStep = KEY_H + KEY_GAP;
-            int row3Y   = KB_Y + 3 * rowStep;
-            int xb      = 4 * KEY_W;
-            if (inRect(sx, sy, xb, row3Y, KEY_W, KEY_H)) {
-                halClickSound();
-                drawKey(xb, row3Y, KEY_W, KEY_H, "B", TFT_WHITE, COL_BG);
-                delay(KEY_FLASH_MS);
-                drawKey(xb, row3Y, KEY_W, KEY_H, "b", COL_KEY_FACE, COL_KEY_LABEL);
-                largeFont = true;
-                tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
-                fontOn();
-                tft.setTextColor(TFT_DARKGREY, COL_BG);
-                tft.drawString("SLUG AI chatbot. Large text.", 0, 0);
-                tft.drawString("Select AI model:", 0, LINE_H_LARGE);
-                fontOff();
-                showModelChoices();
-            }
+        if (ch == 'b' || ch == 'B') {
+            largeFont = !largeFont;
+            tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
+            tft.setTextSize(1); tft.setTextColor(TFT_DARKGREY, COL_BG);
+            tft.setCursor(0, 0); tft.print("SLUG AI chatbot. Large text.");
+            tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
+            showModelChoices();
+            continue;
         }
-
-        // Key I (QWERTY row, index 7) — toggle invert colours, re-show choices
-        {
-            int rowStep = KEY_H + KEY_GAP;
-            int row1Y   = KB_Y + rowStep;
-            int xi      = 7 * KEY_W;
-            if (inRect(sx, sy, xi, row1Y, KEY_W, KEY_H)) {
-                drawKey(xi, row1Y, KEY_W, KEY_H, "I", TFT_WHITE, COL_BG);
-                delay(KEY_FLASH_MS);
-                drawKey(xi, row1Y, KEY_W, KEY_H, "i", COL_KEY_FACE, COL_KEY_LABEL);
-                invertDisplay = !invertDisplay;
-                tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
-                if (largeFont) {
-                    fontOn();
-                    tft.setTextColor(TFT_DARKGREY, COL_BG);
-                    tft.drawString("SLUG AI chatbot. Large text.", 0, 0);
-                    tft.drawString("Select AI model:", 0, LINE_H_LARGE);
-                    fontOff();
-                } else {
-                    tft.setTextSize(1);
-                    tft.setTextColor(TFT_DARKGREY, COL_BG);
-                    tft.setCursor(0,  0); tft.print("SLUG AI chatbot");
-                    tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
-                }
-                showModelChoices();
-            }
+        if (ch == 'i' || ch == 'I') {
+            invertDisplay = !invertDisplay;
+            tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
+            tft.setTextSize(1); tft.setTextColor(TFT_DARKGREY, COL_BG);
+            tft.setCursor(0, 0); tft.print("SLUG AI chatbot");
+            tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
+            showModelChoices();
+            continue;
         }
-
-        // Key C (ZXCVBNM row, index 2) — touch calibration
 #ifndef TARGET_C3
-        {
-            int rowStep = KEY_H + KEY_GAP;
-            int row3Y   = KB_Y + 3 * rowStep;
-            int xc      = 2 * KEY_W;
-            if (inRect(sx, sy, xc, row3Y, KEY_W, KEY_H)) {
-                drawKey(xc, row3Y, KEY_W, KEY_H, "C", TFT_WHITE, COL_BG);
-                delay(KEY_FLASH_MS);
-                drawKey(xc, row3Y, KEY_W, KEY_H, "c", COL_KEY_FACE, COL_KEY_LABEL);
-                calibrateTouch();
-                tft.fillScreen(COL_BG);
-                tft.setTextSize(1);
-                tft.setTextColor(TFT_DARKGREY, COL_BG);
-                tft.setCursor(0,  0); tft.print("SLUG AI chatbot");
-                tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
-                drawKeyboard();
-                drawInputBar();
-                showModelChoices();
-            }
+        if (ch == 'c' || ch == 'C') {
+            calibrateTouch();
+            tft.fillScreen(COL_BG);
+            tft.setTextSize(1); tft.setTextColor(TFT_DARKGREY, COL_BG);
+            tft.setCursor(0, 0); tft.print("SLUG AI chatbot");
+            tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
+#ifndef TARGET_C3
+            drawKeyboard();
+#endif
+            drawInputBar(); showModelChoices();
+            continue;
         }
 #endif
     }
@@ -1633,7 +1577,6 @@ void selectModel() {
 
 void setup() {
     loadWifiCreds();   // load NVS; shows AP picker on first boot if no credentials stored
-    halLoadTouchCal(); // load saved touch calibration from NVS (or keep defaults)
 
 #ifndef TARGET_C3
     // Hold BOOT button (GPIO0) on power-on to wipe touch calibration back to defaults
@@ -1666,6 +1609,7 @@ void setup() {
 
     // Hardware init (backlight, touch, LED, speaker) — delegated to HAL
     halInit();
+    halLoadTouchCal(); // load saved touch calibration from NVS (or keep defaults)
 
     // Boot splash at bottom; white area above it; "Connecting..." is the only text shown
     unsigned long splashStart = millis();
@@ -1726,7 +1670,7 @@ void loop() {
                 int lineH     = largeFont ? LINE_H_LARGE : LINE_H_SMALL;
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
-                scrollOffset  = max(0, scrollOffset - 1);
+                scrollOffset  = max(0, scrollOffset - 3);
                 drawHistory();
                 break;
             }
@@ -1735,11 +1679,12 @@ void loop() {
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
                 int maxScroll = max(0, lineCount - maxVis);
-                scrollOffset  = min(scrollOffset + 1, maxScroll);
+                scrollOffset  = min(scrollOffset + 3, maxScroll);
                 drawHistory();
                 break;
             }
             case INPUT_NEW_CONV:
+do_new_conv:
                 historyCount = 0; lineCount = 0; scrollOffset = 0;
                 moreMode = false; inputBuf[0] = '\0'; inputLen = 0;
                 history[historyCount].isUser = true;
@@ -1758,7 +1703,20 @@ void loop() {
 #endif
                 break;
             case INPUT_ENTER:
+                // Word commands
+                if (strcmp(inputBuf, "new") == 0) {
+                    inputBuf[0] = '\0'; inputLen = 0;
+                    goto do_new_conv;
+                }
+                if (strcmp(inputBuf, "more") == 0) {
+                    if (moreMode) sendPrompt();
+                    break;
+                }
+                if (inputLen == 0 && !moreMode) break;
                 sendPrompt();
+                break;
+            case INPUT_MORE:
+                if (moreMode) sendPrompt();
                 break;
             case INPUT_BACKSPACE:
                 if (inputLen > 0) {
@@ -1774,6 +1732,7 @@ void loop() {
                     inputBuf[inputLen++] = ev.ch;
                     inputBuf[inputLen]   = '\0';
                     drawInputBar();
+                    halClickSound();
                 }
                 break;
             default:
