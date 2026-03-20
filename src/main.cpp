@@ -1713,7 +1713,6 @@ do_new_conv:
                 break;
             case INPUT_BACKSPACE:
                 if (inputLen > 0) {
-                    halClickSound();
                     inputBuf[--inputLen] = '\0';
                     if (inputLen == 0 && historyCount > 0) moreMode = true;
                     drawInputBar();
@@ -1725,7 +1724,6 @@ do_new_conv:
                     inputBuf[inputLen++] = ev.ch;
                     inputBuf[inputLen]   = '\0';
                     drawInputBar();
-                    halClickSound();
                 }
                 break;
             default:
