@@ -204,21 +204,28 @@ class ScanCB : public NimBLEScanCallbacks {
 void halInit() {
     rb_mutex = xSemaphoreCreateMutex();
 
+    Serial.println("[C3 BLE] Starting NimBLE init...");
     NimBLEDevice::init("");
+    Serial.println("[C3 BLE] NimBLE init done");
     NimBLEDevice::setSecurityAuth(true, true, true);   // bonding, MITM, SC
     // NimBLE 2.x: security callbacks live in NimBLEClientCallbacks (see ClientCB above)
 
     // Try bonded address first
     bondedAddr = loadBondedAddress(hasBonded);
+    Serial.printf("[C3 BLE] hasBonded=%d\n", hasBonded);
     if (hasBonded) {
+        Serial.println("[C3 BLE] Trying bonded address...");
         if (!doConnect(bondedAddr)) hasBonded = false;  // stale bond, fall through to scan
+        Serial.printf("[C3 BLE] bonded connect result: connected=%d\n", connected);
     }
 
     if (!connected) {
         // Display waiting message
+        Serial.println("[C3 BLE] Drawing waiting text on display...");
         tft.setTextSize(1);
         tft.setTextColor(0xFFFF, 0x0841);
         tft.setCursor(0, 0); tft.print("Waiting for BLE keyboard...");
+        Serial.println("[C3 BLE] Waiting text drawn. Starting BLE scan...");
 
         NimBLEScan* scan = NimBLEDevice::getScan();
         scan->setScanCallbacks(new ScanCB(), false);

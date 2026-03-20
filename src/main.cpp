@@ -1590,7 +1590,6 @@ void setup() {
     Serial.println("[Cal] Loaded touch calibration from NVS");
 #endif
     waitMsgIdx = random(NUM_WAIT_MSGS);
-
     // Display (init before backlight to avoid white flash)
     tft.init();
 #ifdef ROTATE_180
