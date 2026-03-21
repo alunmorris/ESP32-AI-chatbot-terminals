@@ -119,8 +119,8 @@ static void hidNotifyCB(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, 
 
         if (ctrl && code == 0x11) { ev.type = INPUT_NEW_CONV; }        // Ctrl+N
         else if (ctrl && code == 0x10) { ev.type = INPUT_MORE; }       // Ctrl+M
-        else if (code == 0x52) { ev.type = INPUT_SCROLL_UP; }          // ↑
-        else if (code == 0x51) { ev.type = INPUT_SCROLL_DOWN; }        // ↓
+        else if (code == 0x52) { ev.type = INPUT_SCROLL_DOWN; }        // ↑ = scroll toward newer
+        else if (code == 0x51) { ev.type = INPUT_SCROLL_UP; }          // ↓ = scroll toward older
         else if (code == 0x28) { ev.type = INPUT_ENTER; }              // Enter
         else if (code == 0x2A) { ev.type = INPUT_BACKSPACE; }          // Backspace
         else {

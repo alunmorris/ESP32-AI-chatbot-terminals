@@ -407,6 +407,37 @@ void drawInputBar() {
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
 
+#ifdef TARGET_C3
+    // Render input bar to a sprite to avoid SPI register sync issues on C3
+    TFT_eSprite spr(&tft);
+    spr.setColorDepth(16);
+    spr.createSprite(SCREEN_W, barH);
+    spr.fillSprite(COL_IBAR_BG);
+
+    // Prompt marker
+    spr.setTextSize(2);
+    spr.setTextColor(wifiHealthy ? COL_IBAR_TEXT : TFT_RED, COL_IBAR_BG);
+    spr.setCursor(2, (barH - TXT_H) / 2);
+    spr.print("> ");
+    spr.setTextColor(COL_IBAR_TEXT, COL_IBAR_BG);
+
+    // Input text
+    int maxChars = (SCREEN_W - BTN_SEND_W - 14) / TXT_W;
+    char display[54] = {0};
+    int start = (inputLen > maxChars) ? inputLen - maxChars : 0;
+    strncpy(display, inputBuf + start, maxChars);
+    spr.print(display);
+
+    // Send / More button
+    spr.setTextSize(1);
+    spr.fillRect(SCREEN_W - BTN_SEND_W, BTN_INSET, BTN_SEND_W - BTN_INSET*2, barH - BTN_INSET*2, COL_BTN_BG);
+    spr.setTextColor(wifiHealthy ? COL_BTN_TEXT : TFT_RED, COL_BTN_BG);
+    spr.setCursor(SCREEN_W - BTN_SEND_X_TEXT, (barH - 8) / 2);
+    spr.print(moreMode ? "More" : "Send");
+
+    spr.pushSprite(0, barY);
+    spr.deleteSprite();
+#else
     tft.fillRect(0, barY, SCREEN_W, barH, COL_IBAR_BG);
 
     // Prompt marker — red when WiFi health check fails
@@ -431,8 +462,6 @@ void drawInputBar() {
     tft.setCursor(SCREEN_W - BTN_SEND_X_TEXT, barY + (barH - 8) / 2);
     tft.print(moreMode ? "More" : "Send");
 
-    // Show KB and New buttons (only when KB hidden)
-#ifndef TARGET_C3
     if (!kbVisible) {
         tft.fillRect(SCREEN_W - BTN_SHOWKB_X, barY + BTN_INSET, BTN_SHOWKB_W, barH - BTN_INSET*2, COL_BTN_BG);
         tft.setTextColor(COL_BTN_TEXT, COL_BTN_BG);
