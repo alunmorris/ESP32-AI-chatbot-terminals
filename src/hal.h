@@ -40,3 +40,8 @@ void calibrateTouch();
 
 // CYD28-only: poll touch during blocking waits to allow KB show/hide. No-op on C3.
 void pollKBHide();
+
+// C3-only: deinit NimBLE before HTTPS call to reclaim ~30KB heap for TLS buffers.
+// CYD28: no-ops.
+void halBeforeApiCall();
+void halAfterApiCall();

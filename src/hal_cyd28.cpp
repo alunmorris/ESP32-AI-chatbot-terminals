@@ -439,6 +439,9 @@ bool halPollInput(InputEvent* ev) {
 
 // pollKBHide: used during blocking API wait on CYD28 to allow KB toggle.
 // Only called under #ifndef TARGET_C3 in main.cpp.
+void halBeforeApiCall() {}
+void halAfterApiCall() {}
+
 void pollKBHide() {
     if (!ts.touched()) return;
     TS_Point pt = ts.getPoint();

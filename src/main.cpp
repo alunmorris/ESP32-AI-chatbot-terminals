@@ -165,6 +165,15 @@ void clearWifiPass(const char* ssid) {
 #define COL_BTN_BG      0x2945   // mid grey
 #define COL_BTN_TEXT    TFT_WHITE
 
+// --- UI text metrics: must match uiFontOn() ---
+#ifdef TARGET_C3
+#define TXT_W  12   // GLCD size-2: 12px char width
+#define TXT_H  16   // GLCD size-2: 16px char height
+#else
+#define TXT_W  6    // GLCD size-1: 6px char width
+#define TXT_H  8    // GLCD size-1: 8px char height
+#endif
+
 // --- Objects ---
 TFT_eSPI tft = TFT_eSPI();
 
@@ -252,7 +261,16 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 // fontOn() loads 12px bold smooth font. fontOff() unloads whatever font is loaded.
 // Call sites needing 10px load it directly via tft.loadFont(DejaVuSansBold8pxData).
 void fontOn()  { tft.loadFont(DejaVuSansBold12pxData); }
-void fontOff() { tft.unloadFont(); }
+void fontOff() { tft.unloadFont(); tft.setTextFont(1); }  // always restore GLCD explicitly
+
+// UI text helpers: C3 uses GLCD size 2 (12×16px) — size 1 is unreadable on that display.
+// CYD28 uses GLCD size 1 (6×8px).
+#ifdef TARGET_C3
+inline void uiFontOn()  { tft.setTextSize(2); }
+#else
+inline void uiFontOn()  { tft.setTextSize(1); }
+#endif
+inline void uiFontOff() {}
 
 void drawKey(int x, int y, int w, int h, const char* label, uint16_t face, uint16_t text) {
     tft.fillRect(x, y, w, h, COL_BG);  // clear cell; COL_BG shows as border around inset box
@@ -347,29 +365,33 @@ static const char* rssiToBars(int rssi) {
 void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
     tft.fillScreen(COL_BG);
     fontOff();
-    tft.setTextSize(1);
+    uiFontOn();
     // Header row
     tft.setTextColor(TFT_YELLOW, COL_BG);
-    tft.setCursor(2, (AP_ROW_H - 8) / 2);
+    tft.setCursor(2, (AP_ROW_H - TXT_H) / 2);
     tft.print("Select WiFi network:");
     // Entry rows
     for (int i = 0; i < apCount; i++) {
         int y = AP_ROW_H * (i + 1);
         tft.fillRect(0, y, SCREEN_W, AP_ROW_H - 1, COL_KEY_FACE);
         tft.setTextColor(COL_KEY_LABEL, COL_KEY_FACE);
-        int ty = y + (AP_ROW_H - 8) / 2;
+        int ty = y + (AP_ROW_H - TXT_H) / 2;
         // Number
         char num[3]; snprintf(num, sizeof(num), "%d", i + 1);
         tft.setCursor(2, ty); tft.print(num);
-        // SSID (truncated to 22 chars)
+        // SSID (truncated to fit before signal column)
+        int sigX = SCREEN_W - 9 * TXT_W;
+        int ssidMaxChars = (sigX - 2*TXT_W - 8) / TXT_W;
+        if (ssidMaxChars > 22) ssidMaxChars = 22;
         char ssidDisp[23] = {0};
-        strncpy(ssidDisp, apSsids[i], 22);
-        tft.setCursor(16, ty); tft.print(ssidDisp);
-        // Signal bars + dBm (right side, fixed position x=220)
+        strncpy(ssidDisp, apSsids[i], ssidMaxChars);
+        tft.setCursor(2 + TXT_W, ty); tft.print(ssidDisp);
+        // Signal bars + dBm (right side)
         char sig[12];
         snprintf(sig, sizeof(sig), "%s %4d", rssiToBars(apRssi[i]), apRssi[i]);
-        tft.setCursor(220, ty); tft.print(sig);
+        tft.setCursor(sigX, ty); tft.print(sig);
     }
+    uiFontOff();
 }
 
 // --- WiFi health ---
@@ -389,19 +411,21 @@ void drawInputBar() {
 
     // Prompt marker — red when WiFi health check fails
     tft.setTextColor(wifiHealthy ? COL_IBAR_TEXT : TFT_RED, COL_IBAR_BG);
-    tft.setTextSize(1);
-    tft.setCursor(2, barY + (barH - 8) / 2);
+    uiFontOn();
+    tft.setCursor(2, barY + (barH - TXT_H) / 2);
     tft.print("> ");
     tft.setTextColor(COL_IBAR_TEXT, COL_IBAR_BG);  // restore white for input text
 
     // Input text (truncate if too long to fit)
-    int maxChars = (SCREEN_W - BTN_SEND_W - 14) / 6;  // leave room for Send button
+    int maxChars = (SCREEN_W - BTN_SEND_W - 14) / TXT_W;  // leave room for Send button
     char display[54] = {0};
     int start = (inputLen > maxChars) ? inputLen - maxChars : 0;
     strncpy(display, inputBuf + start, maxChars);
     tft.print(display);
+    uiFontOff();  // restore GLCD before button text
 
-    // Send / More button — text red when WiFi unhealthy
+    // Send / More button — always GLCD size 1 to fit in button
+    tft.setTextSize(1);
     tft.fillRect(SCREEN_W - BTN_SEND_W, barY + BTN_INSET, BTN_SEND_W - BTN_INSET*2, barH - BTN_INSET*2, COL_BTN_BG);
     tft.setTextColor(wifiHealthy ? COL_BTN_TEXT : TFT_RED, COL_BTN_BG);
     tft.setCursor(SCREEN_W - BTN_SEND_X_TEXT, barY + (barH - 8) / 2);
@@ -431,12 +455,20 @@ struct Message {
     char   text[2048];
 };
 
+#ifdef TARGET_C3
+static const int  MAX_MESSAGES = 10;   // reduced from 20 to free heap for TLS+BLE coexistence
+#else
 static const int  MAX_MESSAGES = 20;
+#endif
 Message           history[MAX_MESSAGES];
 int               historyCount = 0;
 
 // Rendered line cache
-static const int  MAX_LINES  = 250;       // 250×128=32KB DRAM; was 400 (overflow with 128-byte lines)
+#ifdef TARGET_C3
+static const int  MAX_LINES  = 100;       // reduced from 250 to free heap for TLS+BLE coexistence
+#else
+static const int  MAX_LINES  = 250;
+#endif
 char              lines[MAX_LINES][128];  // 127 bytes + null per line (UTF-8 safe)
 uint16_t          lineColor[MAX_LINES];
 bool              lineIsUser[MAX_LINES];  // true = right-align (user message)
@@ -688,11 +720,12 @@ void enterPassword(const char* ssidPrompt, char* out) {
 
     tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
     fontOff();
-    tft.setTextSize(1);
+    uiFontOn();
     tft.setTextColor(TFT_YELLOW, COL_BG);
-    tft.setCursor(0, 0);  tft.print("Password for:");
-    tft.setTextColor(TFT_WHITE,  COL_BG);
-    tft.setCursor(0, 10); tft.print(ssidPrompt);
+    tft.setCursor(0, 0);       tft.print("Password for:");
+    tft.setTextColor(TFT_WHITE, COL_BG);
+    tft.setCursor(0, TXT_H);   tft.print(ssidPrompt);
+    uiFontOff();
     drawInputBar();
 #ifndef TARGET_C3
     drawKeyboard();
@@ -758,6 +791,9 @@ bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
         attempts++;
     }
     if (showSplash) tft.fillRect(0, 0, SCREEN_W, LINE_H_LARGE + 2, TFT_WHITE);
+#ifdef TARGET_C3
+    WiFi.setSleep(true);  // modem sleep: yields radio to BLE between beacons
+#endif
     updateLedWifi();
     return WiFi.status() == WL_CONNECTED;
 }
@@ -769,7 +805,7 @@ void selectAP() {
         // --- Scan ---
         WiFi.disconnect(true);  // ensure clean idle state before scan (prev. begin() may leave driver busy)
         tft.fillScreen(COL_BG);
-        fontOff(); tft.setTextColor(TFT_YELLOW, COL_BG);
+        fontOff(); uiFontOn(); tft.setTextColor(TFT_YELLOW, COL_BG);
         tft.setCursor(0, 0); tft.print("Scanning WiFi...");
 
         int n = WiFi.scanNetworks();
@@ -947,6 +983,42 @@ void showWaiting(const char* msg) {
     tft.unloadFont();
 }
 
+// Extract the body from a raw HTTP response, decoding chunked transfer encoding if present.
+// Works directly on resp with no intermediate copies to keep heap usage low.
+static String extractBody(const String& resp) {
+    int hdrEnd = resp.indexOf("\r\n\r\n");
+    if (hdrEnd < 0) return resp;
+    // Scan only the header section for chunked marker
+    bool chunked = false;
+    for (int i = 0; i < hdrEnd - 25; i++) {
+        if (resp[i]=='T' || resp[i]=='t') {
+            if (resp.substring(i, i + 26).equalsIgnoreCase("Transfer-Encoding: chunked")) {
+                chunked = true; break;
+            }
+        }
+    }
+    if (!chunked) return resp.substring(hdrEnd + 4);
+    // Decode chunked body directly from resp — no raw copy, no per-chunk substring
+    String out;
+    out.reserve(resp.length() - hdrEnd);
+    int pos = hdrEnd + 4;
+    while (pos < (int)resp.length()) {
+        int nl = resp.indexOf('\n', pos);
+        if (nl < 0) break;
+        String szHex = resp.substring(pos, nl);
+        szHex.trim();
+        if (szHex.length() == 0) { pos = nl + 1; continue; }
+        unsigned long sz = strtoul(szHex.c_str(), nullptr, 16);
+        if (sz == 0) break;                              // terminal chunk
+        pos = nl + 1;
+        if (pos + (int)sz > (int)resp.length()) sz = resp.length() - pos;
+        out.concat(resp.c_str() + pos, (unsigned int)sz); // no temp String
+        pos += sz + 2;                                   // skip trailing \r\n
+    }
+    Serial.printf("[extractBody] raw=%d decoded=%d\n", resp.length(), out.length());
+    return out;
+}
+
 // --- Gemini API call ---
 String callGemini(const char* prompt) {
     // Build JSON body
@@ -1014,14 +1086,31 @@ String callGemini(const char* prompt) {
 
     // Read full response — drain available() buffer even after SSL close_notify
     // marks connection closed (readString() stops too early in that case)
+    // Read response using read(buf,n) — avoids client.available() which can prematurely
+    // process the server's TLS close_notify and discard buffered bytes.
     String fullResp = "";
+    // No reserve — let String grow dynamically to minimize peak heap usage
+    uint8_t rbuf[256];
     unsigned long deadline   = millis() + API_TIMEOUT_MS;
-    unsigned long nextMsgMs  = millis() + API_WAIT_FIRST_MS;  // first message swap after 4s
+    unsigned long nextMsgMs  = millis() + API_WAIT_FIRST_MS;
+    unsigned long lastData   = millis();
+    bool receivedAny = false;
     while (millis() < deadline) {
-        while (client.available()) {
-            fullResp += (char)client.read();
+        int n = client.read(rbuf, sizeof(rbuf));
+        if (n > 0) {
+            lastData = millis();
+            receivedAny = true;
+            for (int i = 0; i < n; i++) fullResp += (char)rbuf[i];
+            continue;  // read more without delay
         }
-        if (!client.connected() && !client.available()) break;
+        // n <= 0: "no data right now" — ESP32 NetworkClientSecure returns -1 from read()
+        // whenever available() is 0, even mid-stream between TLS records. Never break on it.
+        // When available() processes TLS close_notify it calls stop() internally;
+        // connected() then returns false so we break immediately.
+        if (receivedAny && !client.connected()) break;  // server closed connection
+        if (receivedAny && millis() - lastData > 1000) break;  // 1s idle = response complete
+        if (!receivedAny && millis() - lastData > 15000) break;  // 15s no first byte = give up
+        if (WiFi.status() != WL_CONNECTED) break;
         if (millis() >= nextMsgMs) {
             showWaiting(WAIT_MSGS[waitMsgIdx]);
             waitMsgIdx = (waitMsgIdx + 1) % NUM_WAIT_MSGS;
@@ -1030,7 +1119,7 @@ String callGemini(const char* prompt) {
 #ifndef TARGET_C3
         pollKBHide();
 #endif
-        delay(10);
+        delay(5);
     }
     client.stop();
     Serial.printf("[Gemini] response len=%d\n", fullResp.length());
@@ -1045,20 +1134,29 @@ String callGemini(const char* prompt) {
         sscanf(fullResp.substring(statusPos, eol).c_str(), "HTTP/%*s %d", &httpStatus);
     }
 
-    // Locate JSON body — starts at first '{'
-    int jsonStart = fullResp.indexOf('{');
+    // Decode chunked encoding if present, then locate JSON body
+    String jsonBody = extractBody(fullResp);
+    int jsonStart = jsonBody.indexOf('{');
     if (jsonStart < 0) {
         char buf[40]; snprintf(buf, sizeof(buf), "ERR: HTTP %d, no JSON", httpStatus);
         return String(buf);
     }
-    String respBody = fullResp.substring(jsonStart);
-
-    // Parse JSON — success if candidates present, error if error.message present
+    // Parse JSON — use filter to skip grounding metadata (can be 8KB+), only extract what we need
+    JsonDocument filter;
+    filter["candidates"][0]["content"]["parts"][0]["text"] = true;
+    filter["error"]["message"] = true;
     JsonDocument respDoc;
-    if (deserializeJson(respDoc, respBody) != DeserializationError::Ok) {
-        Serial.println("Bad JSON (HTTP " + String(httpStatus) + "): " + respBody.substring(0, 300));
+    DeserializationError derr = deserializeJson(respDoc, jsonBody.c_str() + jsonStart,
+                                                DeserializationOption::Filter(filter));
+    if (derr != DeserializationError::Ok && derr != DeserializationError::IncompleteInput) {
+        Serial.println("Bad JSON (HTTP " + String(httpStatus) + "): " + jsonBody.substring(jsonStart, jsonStart + 300) + " err=" + derr.c_str());
         char buf[40]; snprintf(buf, sizeof(buf), "ERR: HTTP %d, bad JSON", httpStatus);
         return String(buf);
+    }
+    if (derr == DeserializationError::IncompleteInput) {
+        // JSON truncated (large grounding metadata) — text field is early in the response
+        // and should already be captured; fall through and try to use it
+        Serial.printf("[Gemini] truncated JSON (%d bytes), trying partial\n", jsonBody.length());
     }
 
     // Check for API error
@@ -1129,13 +1227,24 @@ String callGrok(const char* prompt) {
     client.print(body);
 
     String fullResp = "";
+    // No reserve — let String grow dynamically to minimize peak heap usage
+    uint8_t rbuf[256];
     unsigned long deadline  = millis() + API_TIMEOUT_MS;
     unsigned long nextMsgMs = millis() + API_WAIT_FIRST_MS;
+    unsigned long lastData  = millis();
+    bool receivedAny = false;
     while (millis() < deadline) {
-        while (client.available()) {
-            fullResp += (char)client.read();
+        int n = client.read(rbuf, sizeof(rbuf));
+        if (n > 0) {
+            lastData = millis();
+            receivedAny = true;
+            for (int i = 0; i < n; i++) fullResp += (char)rbuf[i];
+            continue;
         }
-        if (!client.connected() && !client.available()) break;
+        if (receivedAny && !client.connected()) break;
+        if (receivedAny && millis() - lastData > 1000) break;
+        if (!receivedAny && millis() - lastData > 15000) break;
+        if (WiFi.status() != WL_CONNECTED) break;
         if (millis() >= nextMsgMs) {
             showWaiting(WAIT_MSGS[waitMsgIdx]);
             waitMsgIdx = (waitMsgIdx + 1) % NUM_WAIT_MSGS;
@@ -1284,13 +1393,24 @@ String callGroq(const char* prompt) {
     client.print(body);
 
     String fullResp = "";
+    // No reserve — let String grow dynamically to minimize peak heap usage
+    uint8_t rbuf[256];
     unsigned long deadline  = millis() + API_TIMEOUT_MS;
     unsigned long nextMsgMs = millis() + API_WAIT_FIRST_MS;
+    unsigned long lastData  = millis();
+    bool receivedAny = false;
     while (millis() < deadline) {
-        while (client.available()) {
-            fullResp += (char)client.read();
+        int n = client.read(rbuf, sizeof(rbuf));
+        if (n > 0) {
+            lastData = millis();
+            receivedAny = true;
+            for (int i = 0; i < n; i++) fullResp += (char)rbuf[i];
+            continue;
         }
-        if (!client.connected() && !client.available()) break;
+        if (receivedAny && !client.connected()) break;
+        if (receivedAny && millis() - lastData > 1000) break;
+        if (!receivedAny && millis() - lastData > 15000) break;
+        if (WiFi.status() != WL_CONNECTED) break;
         if (millis() >= nextMsgMs) {
             showWaiting(WAIT_MSGS[waitMsgIdx]);
             waitMsgIdx = (waitMsgIdx + 1) % NUM_WAIT_MSGS;
@@ -1376,8 +1496,20 @@ void sendPrompt() {
     addMessage(true, false, prompt);
     showThinking();
 
-    // Call API
+    // Call API — deinit NimBLE on C3 to free ~30KB heap for TLS buffers.
+    halBeforeApiCall();
+    if (WiFi.status() != WL_CONNECTED) {
+        WiFi.reconnect();
+        for (int i = 0; i < 50 && WiFi.status() != WL_CONNECTED; i++) delay(100);
+    }
     String response = useGroq ? callGroq(prompt) : (useGrok ? callGrok(prompt) : callGemini(prompt));
+    // Retry once on empty response (transient WiFi disruption after NimBLE deinit on C3)
+    if (response == "ERR: empty response") {
+        if (WiFi.status() != WL_CONNECTED) WiFi.reconnect();
+        for (int i = 0; i < 50 && WiFi.status() != WL_CONNECTED; i++) delay(100);
+        response = useGroq ? callGroq(prompt) : (useGrok ? callGrok(prompt) : callGemini(prompt));
+    }
+    halAfterApiCall();
 
     if (response.startsWith("ERR:")) {
         addMessage(false, true, response.c_str());
@@ -1425,22 +1557,21 @@ void showModelChoices() {
     // Slug logo top-right (below the two help lines, clear of left-aligned model text)
     tft.pushImage(SCREEN_W - SLUGSMALL_W, 20, SLUGSMALL_W, SLUGSMALL_H, SLUG_SMALL);
 
-    tft.setTextSize(1);
+    uiFontOn();
     tft.setTextColor(TFT_WHITE, COL_BG);
-    tft.setCursor(0, 30); tft.print("Hit 1 for Gemini 2.5 Flash");
-    tft.setCursor(0, 40); tft.print("    2 for Gemini 3 Flash");
-    tft.setCursor(0, 50); tft.print("    3 for Gemini 3.1 Pro");
-    tft.setCursor(0, 60); tft.print("    4 for Grok 4.1 Fast Reasoning");
-    tft.setCursor(0, 70); tft.print("    5 for Groq GPT-OSS-120b");
-    int nextY = 80;
+    int optY = 20 + TXT_H + 4;  // start below the two header lines
+    tft.setCursor(0, optY); tft.print("Hit 1 for Gemini 2.5 Flash"); optY += TXT_H;
+    tft.setCursor(0, optY); tft.print("    2 for Gemini 3 Flash");   optY += TXT_H;
+    tft.setCursor(0, optY); tft.print("    3 for Gemini 3.1 Pro");   optY += TXT_H;
+    tft.setCursor(0, optY); tft.print("    4 for Grok 4.1 Fast");    optY += TXT_H;
+    tft.setCursor(0, optY); tft.print("    5 for Groq OSS-120b");    optY += TXT_H;
     if (!largeFont) {
-        tft.setCursor(0, nextY); tft.print("    b for bigger font");
-        nextY += 10;
+        tft.setCursor(0, optY); tft.print("    b for bigger font");  optY += TXT_H;
     }
     if (!invertDisplay) {
-        tft.setCursor(0, nextY); tft.print("    i  to invert colours");
-        nextY += 10;
+        tft.setCursor(0, optY); tft.print("    i to invert colours"); optY += TXT_H;
     }
+    uiFontOff();
 }
 
 void selectModel() {
@@ -1478,12 +1609,13 @@ void selectModel() {
                 tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
                 fontOff();
             } else {
-                tft.setTextSize(1);
+                uiFontOn();
                 tft.setTextColor(TFT_GREEN, bg);
-                tft.setCursor(0,  0); tft.print("SLUG AI Chatbot v0.2");
-                tft.setCursor(0, 10); tft.print("Model: "); tft.print(GEMINI_MODEL);
+                tft.setCursor(0,        0); tft.print("SLUG AI Chatbot v0.2");
+                tft.setCursor(0,   TXT_H); tft.print("Model: "); tft.print(GEMINI_MODEL);
                 tft.setTextColor(TFT_DARKGREY, bg);
-                tft.setCursor(0, 20); tft.print("Ready.");
+                tft.setCursor(0, 2*TXT_H); tft.print("Ready.");
+                uiFontOff();
             }
             return;
         }
@@ -1502,12 +1634,13 @@ void selectModel() {
                 tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
                 fontOff();
             } else {
-                tft.setTextSize(1);
+                uiFontOn();
                 tft.setTextColor(TFT_GREEN, bg);
-                tft.setCursor(0,  0); tft.print("SLUG AI Chatbot. Swipe down/up to scroll.");
-                tft.setCursor(0, 10); tft.print("Model: Grok 4.1 Fast");
+                tft.setCursor(0,        0); tft.print("SLUG AI Chatbot");
+                tft.setCursor(0,   TXT_H); tft.print("Model: Grok 4.1 Fast");
                 tft.setTextColor(TFT_DARKGREY, bg);
-                tft.setCursor(0, 20); tft.print("Ready.");
+                tft.setCursor(0, 2*TXT_H); tft.print("Ready.");
+                uiFontOff();
             }
             return;
         }
@@ -1526,30 +1659,33 @@ void selectModel() {
                 tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
                 fontOff();
             } else {
-                tft.setTextSize(1);
+                uiFontOn();
                 tft.setTextColor(TFT_GREEN, bg);
-                tft.setCursor(0,  0); tft.print("SLUG AI chatbot. Swipe down/up to scroll.");
-                tft.setCursor(0, 10); tft.print("Model: Groq GPT-OSS-120b");
+                tft.setCursor(0,        0); tft.print("SLUG AI chatbot");
+                tft.setCursor(0,   TXT_H); tft.print("Model: Groq GPT-OSS-120b");
                 tft.setTextColor(TFT_DARKGREY, bg);
-                tft.setCursor(0, 20); tft.print("Ready.");
+                tft.setCursor(0, 2*TXT_H); tft.print("Ready.");
+                uiFontOff();
             }
             return;
         }
         if (ch == 'b' || ch == 'B') {
             largeFont = !largeFont;
             tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
-            tft.setTextSize(1); tft.setTextColor(TFT_DARKGREY, COL_BG);
-            tft.setCursor(0, 0); tft.print("SLUG AI chatbot. Large text.");
-            tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
+            uiFontOn(); tft.setTextColor(TFT_DARKGREY, COL_BG);
+            tft.setCursor(0,      0); tft.print("SLUG AI chatbot");
+            tft.setCursor(0, TXT_H); tft.print("Select AI model:");
+            uiFontOff();
             showModelChoices();
             continue;
         }
         if (ch == 'i' || ch == 'I') {
             invertDisplay = !invertDisplay;
             tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
-            tft.setTextSize(1); tft.setTextColor(TFT_DARKGREY, COL_BG);
-            tft.setCursor(0, 0); tft.print("SLUG AI chatbot");
-            tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
+            uiFontOn(); tft.setTextColor(TFT_DARKGREY, COL_BG);
+            tft.setCursor(0,      0); tft.print("SLUG AI chatbot");
+            tft.setCursor(0, TXT_H); tft.print("Select AI model:");
+            uiFontOff();
             showModelChoices();
             continue;
         }
@@ -1557,9 +1693,10 @@ void selectModel() {
         if (ch == 'c' || ch == 'C') {
             calibrateTouch();
             tft.fillScreen(COL_BG);
-            tft.setTextSize(1); tft.setTextColor(TFT_DARKGREY, COL_BG);
-            tft.setCursor(0, 0); tft.print("SLUG AI chatbot");
-            tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
+            uiFontOn(); tft.setTextColor(TFT_DARKGREY, COL_BG);
+            tft.setCursor(0,      0); tft.print("SLUG AI chatbot");
+            tft.setCursor(0, TXT_H); tft.print("Select AI model:");
+            uiFontOff();
             drawKeyboard();
             drawInputBar(); showModelChoices();
             continue;
@@ -1632,10 +1769,11 @@ void setup() {
 #endif
     drawInputBar();
 
-    tft.setTextSize(1);
-    tft.setTextColor(TFT_DARKGREY, COL_BG);
-    tft.setCursor(0,  0); tft.print("SLUG AI chatbot");
-    tft.setCursor(0, 10); tft.print("Ready. Select AI model:");
+    uiFontOn();
+    tft.setTextColor(TFT_WHITE, COL_BG);
+    tft.setCursor(0,          0); tft.print("SLUG AI chatbot");
+    tft.setCursor(0, TXT_H + 4); tft.print("Select AI model:");
+    uiFontOff();
 
     selectModel();  // draws choices at y=30+ and waits for 1/2/3
 }
@@ -1711,7 +1849,9 @@ do_new_conv:
                     goto do_new_conv;
                 }
                 if (strcmp(inputBuf, "more") == 0) {
-                    if (moreMode) sendPrompt();
+                    inputBuf[0] = '\0'; inputLen = 0;
+                    moreMode = true;
+                    sendPrompt();
                     break;
                 }
                 if (inputLen == 0 && !moreMode) break;
