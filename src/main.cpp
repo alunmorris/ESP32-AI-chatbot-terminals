@@ -590,32 +590,48 @@ void rebuildLines() {
 void drawHistory() {
     int histH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
     uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-    tft.fillRect(0, 0, SCREEN_W, histH, bg);
-
-    int lineH  = largeFont ? LINE_H_LARGE : LINE_H_SMALL;   // DejaVuSansBold12px: 15px  GLCD: 8px+2gap
+    int lineH  = largeFont ? LINE_H_LARGE : LINE_H_SMALL;
     int maxVis = histH / lineH;
 
-    // scrollOffset=0 means show bottom of history
     int firstIdx = lineCount - maxVis - scrollOffset;
     if (firstIdx < 0) firstIdx = 0;
 
-    if (largeFont) fontOn(); else tft.loadFont(DejaVuSansBold8pxData);
-    tft.setTextWrap(false);  // prevent overflow wrapping onto adjacent lines
-    for (int i = 0; i < maxVis && (firstIdx + i) < lineCount; i++) {
-        int idx = firstIdx + i;
-        uint16_t col = lineColor[idx];
-        if (invertDisplay) col = TFT_BLACK;
-        tft.setTextColor(col, bg);
-        if (lineIsUser[idx]) {
-            tft.setTextDatum(TR_DATUM);
-            tft.drawString(lines[idx], SCREEN_W, i * lineH);
-            tft.setTextDatum(TL_DATUM);
-        } else {
-            tft.drawString(lines[idx], 0, i * lineH);
+    // Render each line to a RAM sprite, then push to display in one SPI block.
+    // This avoids repeated setWindow/pushBlock transitions that cause partial
+    // screen updates on ESP32-C3 (SPI register sync issue without DMA).
+    TFT_eSprite spr(&tft);
+    spr.setColorDepth(16);
+    spr.createSprite(SCREEN_W, lineH);
+    if (largeFont) spr.loadFont(DejaVuSansBold12pxData);
+    else           spr.loadFont(DejaVuSansBold8pxData);
+    spr.setTextWrap(false);
+
+    for (int i = 0; i < maxVis; i++) {
+        spr.fillSprite(bg);
+        if ((firstIdx + i) < lineCount) {
+            int idx = firstIdx + i;
+            uint16_t col = lineColor[idx];
+            if (invertDisplay) col = TFT_BLACK;
+            spr.setTextColor(col, bg);
+            if (lineIsUser[idx]) {
+                spr.setTextDatum(TR_DATUM);
+                spr.drawString(lines[idx], SCREEN_W, 0);
+                spr.setTextDatum(TL_DATUM);
+            } else {
+                spr.drawString(lines[idx], 0, 0);
+            }
         }
+        spr.pushSprite(0, i * lineH);
     }
-    tft.setTextWrap(true);
-    fontOff();
+
+    spr.unloadFont();
+    spr.deleteSprite();
+
+    // Clear any remaining pixels below the last line
+    int usedH = maxVis * lineH;
+    if (usedH < histH) {
+        tft.fillRect(0, usedH, SCREEN_W, histH - usedH, bg);
+    }
 }
 
 // Returns true if codepoint cp is covered by the VLW font.
@@ -1599,7 +1615,8 @@ void selectModel() {
             geminiUseGlobal = modelGlobal[i];
             useGrok = false; useGroq = false;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-            tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
+            int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
+            tft.fillRect(0, 0, SCREEN_W, clearH, bg);
             if (largeFont) {
                 fontOn();
                 tft.setTextColor(TFT_GREEN, bg);
@@ -1624,7 +1641,8 @@ void selectModel() {
             slideOutSlug();
             useGrok = true; useGroq = false;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-            tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
+            int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
+            tft.fillRect(0, 0, SCREEN_W, clearH, bg);
             if (largeFont) {
                 fontOn();
                 tft.setTextColor(TFT_GREEN, bg);
@@ -1649,7 +1667,8 @@ void selectModel() {
             slideOutSlug();
             useGroq = true; useGrok = false;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-            tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, bg);
+            int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
+            tft.fillRect(0, 0, SCREEN_W, clearH, bg);
             if (largeFont) {
                 fontOn();
                 tft.setTextColor(TFT_GREEN, bg);
@@ -1671,7 +1690,8 @@ void selectModel() {
         }
         if (ch == 'b' || ch == 'B') {
             largeFont = !largeFont;
-            tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
+            int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
+            tft.fillRect(0, 0, SCREEN_W, clearH, COL_BG);
             uiFontOn(); tft.setTextColor(TFT_DARKGREY, COL_BG);
             tft.setCursor(0,      0); tft.print("SLUG AI chatbot");
             tft.setCursor(0, TXT_H); tft.print("Select AI model:");
@@ -1681,7 +1701,8 @@ void selectModel() {
         }
         if (ch == 'i' || ch == 'I') {
             invertDisplay = !invertDisplay;
-            tft.fillRect(0, 0, SCREEN_W, HIST_H_KB_SHOW, COL_BG);
+            int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
+            tft.fillRect(0, 0, SCREEN_W, clearH, COL_BG);
             uiFontOn(); tft.setTextColor(TFT_DARKGREY, COL_BG);
             tft.setCursor(0,      0); tft.print("SLUG AI chatbot");
             tft.setCursor(0, TXT_H); tft.print("Select AI model:");
@@ -1737,6 +1758,7 @@ void setup() {
     tft.setRotation(0);
     tft.fillScreen(COL_BG);  // writes all 240x320 GRAM cells
     tft.setRotation(1);      // MX|MV landscape: correct physical orientation
+    Serial.printf("[TFT] width=%d height=%d (expect %dx%d)\n", tft.width(), tft.height(), SCREEN_W, SCREEN_H);
 #else
     #ifdef ROTATE_180
         tft.setRotation(3);
