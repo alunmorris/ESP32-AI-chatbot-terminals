@@ -158,6 +158,7 @@ void clearWifiPass(const char* ssid) {
 // --- Colours ---
 #define COL_BG          0x0841   // #080808 — nearest RGB565 to #0D0D0D
 #define COL_USER        TFT_CYAN
+#define COL_USER_LIGHT  0x8400   // dark yellow / olive — user text in Light Theme
 #define COL_AI          0xF760   // #F8EC00 — nearest RGB565 to #FFEE00
 #define COL_ERROR       TFT_RED
 #define COL_KEY_FACE    0x4208   // dark grey
@@ -442,7 +443,7 @@ void drawInputBar() {
             spr.deleteSprite();
         } else {
             // Direct fallback
-            tft.fillRect(0, inputY, SCREEN_W, lineH, bg);
+            tft.fillRect(0, inputY, SCREEN_W, SCREEN_H - inputY, bg);
             fontOn();
             tft.setTextColor(wifiHealthy ? TFT_DARKGREY : TFT_RED, bg);
             tft.drawString("> ", 2, inputY);
@@ -596,10 +597,10 @@ void drawHistory() {
     int lineH  = LINE_H_LARGE;
     int maxVis = histH / lineH;
 
-    // On C3 the last history slot is reserved for the inline input prompt.
+    // On C3: slot 0 = model heading, last slot = inline input prompt.
     int histSlots = maxVis;
 #ifdef TARGET_C3
-    histSlots = maxVis - 1;
+    histSlots = maxVis - 2;
 #endif
     int firstIdx = lineCount - histSlots - scrollOffset;
     if (firstIdx < 0) firstIdx = 0;
@@ -615,12 +616,29 @@ void drawHistory() {
         spr.loadFont(DejaVuSansBold12pxData);
         spr.setTextWrap(false);
 
+        // Pre-fill background — on C3's polled SPI the very first pushSprite after
+        // a large prior transfer can land on a stale window; fillRect here ensures
+        // the correct bg is visible even if slot 0's push is delayed or reordered.
+        tft.fillRect(0, 0, SCREEN_W, histH, bg);
+
+        // Slot 0: model heading
+        {
+            const char* modelLabel = useGrok ? "Grok 4.1 Fast" :
+                                     useGroq ? "Groq OSS-120b" : GEMINI_MODEL;
+            spr.fillSprite(bg);
+            spr.setTextColor(invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
+            spr.drawString(modelLabel, 2, 0);
+            spr.pushSprite(0, 0);
+        }
+
         for (int i = 0; i < histSlots; i++) {
             spr.fillSprite(bg);
             if ((firstIdx + i) < lineCount) {
                 int idx = firstIdx + i;
                 uint16_t col = lineColor[idx];
-                if (invertDisplay) col = TFT_BLACK;
+                if (invertDisplay && col != COL_ERROR) {
+                    col = lineIsUser[idx] ? COL_USER_LIGHT : TFT_BLACK;
+                }
                 spr.setTextColor(col, bg);
                 if (lineIsUser[idx]) {
                     spr.setTextDatum(TR_DATUM);
@@ -630,7 +648,7 @@ void drawHistory() {
                     spr.drawString(lines[idx], 2, 0);
                 }
             }
-            spr.pushSprite(0, i * lineH);
+            spr.pushSprite(0, (i + 1) * lineH);  // +1: slot 0 is the heading
         }
 
         // Input line — always the last visible slot
@@ -655,7 +673,7 @@ void drawHistory() {
             char dispBuf[INPUT_BUF_SIZE] = {0};
             strncpy(dispBuf, inputBuf + start, inputLen - start);
             spr.drawString(dispBuf, 2 + promptW, 0);
-            spr.pushSprite(0, histSlots * lineH);
+            spr.pushSprite(0, (maxVis - 1) * lineH);  // last slot, after heading + histSlots chat lines
         }
 
         spr.unloadFont();
@@ -676,7 +694,9 @@ void drawHistory() {
     for (int i = 0; i < maxVis && (firstIdx + i) < lineCount; i++) {
         int idx = firstIdx + i;
         uint16_t col = lineColor[idx];
-        if (invertDisplay) col = TFT_BLACK;
+        if (invertDisplay && col != COL_ERROR) {
+            col = lineIsUser[idx] ? COL_USER_LIGHT : TFT_BLACK;
+        }
         tft.setTextColor(col, bg);
         if (lineIsUser[idx]) {
             tft.setTextDatum(TR_DATUM);
@@ -1052,7 +1072,7 @@ void showWaiting(const char* msg) {
         int lineH  = LINE_H_LARGE;
         int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;
         uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-        tft.fillRect(0, inputY, SCREEN_W, lineH, bg);
+        tft.fillRect(0, inputY, SCREEN_W, SCREEN_H - inputY, bg);  // fill to screen bottom — clears glyph descenders
         fontOn();
         tft.setTextColor(TFT_DARKGREY, bg);
         tft.drawString(msg, 2, inputY);
@@ -1107,41 +1127,7 @@ static String extractBody(const String& resp) {
 
 // --- Gemini API call ---
 String callGemini(const char* prompt) {
-    // Build JSON body
-    JsonDocument reqDoc;
-    JsonObject sysInstr = reqDoc["system_instruction"].to<JsonObject>();
-    JsonArray  sysParts = sysInstr["parts"].to<JsonArray>();
-    JsonObject sysPart  = sysParts.add<JsonObject>();
-    sysPart["text"]     = "Respond in 80 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols. Use paragraphs to separate distinct ideas. Never include URLs or hyperlinks. When quoting current or time-sensitive information, use your search tool to check live sources first.";
-
-    JsonArray contents = reqDoc["contents"].to<JsonArray>();
-
-    // Add conversation history (exclude the final entry — that IS the current prompt,
-    // already appended to history[] by addMessage() in sendPrompt before this call)
-    for (int i = 0; i < historyCount - 1; i++) {
-        if (history[i].displayOnly) continue;
-        JsonObject msg  = contents.add<JsonObject>();
-        msg["role"]     = history[i].isUser ? "user" : "model";
-        JsonArray parts = msg["parts"].to<JsonArray>();
-        JsonObject part = parts.add<JsonObject>();
-        part["text"]    = history[i].text;
-    }
-
-    // Add current prompt (sent once only)
-    JsonObject curMsg  = contents.add<JsonObject>();
-    curMsg["role"]     = "user";
-    JsonArray curParts = curMsg["parts"].to<JsonArray>();
-    JsonObject curPart = curParts.add<JsonObject>();
-    curPart["text"]    = prompt;
-
-    // Enable Google Search grounding so the model can retrieve live web results
-    JsonArray tools = reqDoc["tools"].to<JsonArray>();
-    tools.add<JsonObject>()["google_search"].to<JsonObject>();
-
-    String body;
-    serializeJson(reqDoc, body);
-
-    // Build URL path with API key
+    // Build URL path early (stack-only, no heap)
     char path[256];
     snprintf(path, sizeof(path),
         "/v1beta/models/%s:generateContent?key=%s",
@@ -1162,20 +1148,49 @@ String callGemini(const char* prompt) {
         return "ERR: connect failed (check WiFi/DNS)";
     }
 
-    client.printf(
-        "POST %s HTTP/1.0\r\n"
-        "Host: " GEMINI_HOST "\r\n"
-        "Content-Type: application/json\r\n"
-        "Content-Length: %d\r\n\r\n",
-        path, (int)body.length());
-    client.print(body);
+    // Build + send request body in an inner scope so reqDoc and body are freed
+    // immediately after sending — before the response is read. This prevents
+    // reqDoc (~4-8KB) and body (~1KB) from being alive simultaneously with
+    // fullResp, reducing peak heap by ~5-10KB.
+    {
+        JsonDocument reqDoc;
+        JsonObject sysInstr = reqDoc["system_instruction"].to<JsonObject>();
+        JsonArray  sysParts = sysInstr["parts"].to<JsonArray>();
+        JsonObject sysPart  = sysParts.add<JsonObject>();
+        sysPart["text"]     = "Respond in 80 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols. Use paragraphs to separate distinct ideas. Never include URLs or hyperlinks. When quoting current or time-sensitive information, use your search tool to check live sources first.";
 
-    // Read full response — drain available() buffer even after SSL close_notify
-    // marks connection closed (readString() stops too early in that case)
-    // Read response using read(buf,n) — avoids client.available() which can prematurely
-    // process the server's TLS close_notify and discard buffered bytes.
-    String fullResp = "";
-    // No reserve — let String grow dynamically to minimize peak heap usage
+        JsonArray contents = reqDoc["contents"].to<JsonArray>();
+        for (int i = 0; i < historyCount - 1; i++) {
+            if (history[i].displayOnly) continue;
+            JsonObject msg  = contents.add<JsonObject>();
+            msg["role"]     = history[i].isUser ? "user" : "model";
+            JsonArray parts = msg["parts"].to<JsonArray>();
+            JsonObject part = parts.add<JsonObject>();
+            part["text"]    = history[i].text;
+        }
+        JsonObject curMsg  = contents.add<JsonObject>();
+        curMsg["role"]     = "user";
+        JsonArray curParts = curMsg["parts"].to<JsonArray>();
+        JsonObject curPart = curParts.add<JsonObject>();
+        curPart["text"]    = prompt;
+        JsonArray tools = reqDoc["tools"].to<JsonArray>();
+        tools.add<JsonObject>()["google_search"].to<JsonObject>();
+
+        String body;
+        serializeJson(reqDoc, body);
+        client.printf(
+            "POST %s HTTP/1.0\r\n"
+            "Host: " GEMINI_HOST "\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: %d\r\n\r\n",
+            path, (int)body.length());
+        client.print(body);
+        // reqDoc and body freed here — scope ends
+    }
+
+    // Read full response using read(buf,n) — avoids available() which can prematurely
+    // process TLS close_notify and discard buffered bytes.
+    String fullResp;
     uint8_t rbuf[256];
     unsigned long deadline   = millis() + API_TIMEOUT_MS;
     unsigned long nextMsgMs  = millis() + API_WAIT_FIRST_MS;
@@ -1186,13 +1201,10 @@ String callGemini(const char* prompt) {
         if (n > 0) {
             lastData = millis();
             receivedAny = true;
-            for (int i = 0; i < n; i++) fullResp += (char)rbuf[i];
+            fullResp.concat((const char*)rbuf, n);  // append whole chunk — fewer reallocations
             continue;  // read more without delay
         }
-        // n <= 0: "no data right now" — ESP32 NetworkClientSecure returns -1 from read()
-        // whenever available() is 0, even mid-stream between TLS records. Never break on it.
-        // When available() processes TLS close_notify it calls stop() internally;
-        // connected() then returns false so we break immediately.
+        // n <= 0: no data right now. Never break on this alone.
         if (receivedAny && !client.connected()) break;  // server closed connection
         if (receivedAny && millis() - lastData > 1000) break;  // 1s idle = response complete
         if (!receivedAny && millis() - lastData > 15000) break;  // 15s no first byte = give up
@@ -1220,19 +1232,22 @@ String callGemini(const char* prompt) {
         sscanf(fullResp.substring(statusPos, eol).c_str(), "HTTP/%*s %d", &httpStatus);
     }
 
-    // Decode chunked encoding if present, then locate JSON body
-    String jsonBody = extractBody(fullResp);
-    int jsonStart = jsonBody.indexOf('{');
+    // HTTP/1.0 is never chunked — skip headers and find JSON start directly in fullResp,
+    // avoiding the extractBody() copy that would double peak heap usage.
+    int hdrEnd   = fullResp.indexOf("\r\n\r\n");
+    int bodyOff  = (hdrEnd >= 0) ? hdrEnd + 4 : 0;
+    int jsonStart = fullResp.indexOf('{', bodyOff);
     if (jsonStart < 0) {
         char buf[40]; snprintf(buf, sizeof(buf), "ERR: HTTP %d, no JSON", httpStatus);
         return String(buf);
     }
-    // Parse JSON — use filter to skip grounding metadata (can be 8KB+), only extract what we need
+
+    // Parse JSON — use filter to skip grounding metadata (can be 8KB+)
     JsonDocument filter;
     filter["candidates"][0]["content"]["parts"][0]["text"] = true;
     filter["error"]["message"] = true;
     JsonDocument respDoc;
-    DeserializationError derr = deserializeJson(respDoc, jsonBody.c_str() + jsonStart,
+    DeserializationError derr = deserializeJson(respDoc, fullResp.c_str() + jsonStart,
                                                 DeserializationOption::Filter(filter));
     if (derr == DeserializationError::Ok || derr == DeserializationError::IncompleteInput) {
         // IncompleteInput is normal: Gemini appends large metadata after the text field;
@@ -1247,15 +1262,13 @@ String callGemini(const char* prompt) {
         if (text) return String(text);
     }
 
-    // JSON parse failed or text field not captured (truncated mid-string) —
-    // manually extract "text": "..." from the raw response
+    // JSON parse failed or text field not captured — manually extract "text": "..."
     Serial.printf("[Gemini] JSON err=%s, trying manual extract\n", derr.c_str());
-    const char* raw = jsonBody.c_str() + jsonStart;
+    const char* raw = fullResp.c_str() + jsonStart;
     const char* marker = strstr(raw, "\"text\": \"");
     if (!marker) marker = strstr(raw, "\"text\":\"");
     if (marker) {
         const char* start = strchr(marker + 6, '"') + 1;  // skip past opening quote
-        // Scan for unescaped closing quote or end of data
         String result;
         const char* p = start;
         while (*p) {
@@ -1263,7 +1276,6 @@ String callGemini(const char* prompt) {
             if (*p == '"') break;
             result += *p++;
         }
-        // Unescape JSON string escapes
         result.replace("\\n", "\n");
         result.replace("\\\"", "\"");
         result.replace("\\\\", "\\");
@@ -1273,41 +1285,13 @@ String callGemini(const char* prompt) {
         }
     }
 
-    Serial.println("Bad JSON (HTTP " + String(httpStatus) + "): " + jsonBody.substring(jsonStart, jsonStart + 300) + " err=" + derr.c_str());
+    Serial.println("Bad JSON (HTTP " + String(httpStatus) + "): " + fullResp.substring(jsonStart, jsonStart + 300) + " err=" + derr.c_str());
     char buf[40]; snprintf(buf, sizeof(buf), "ERR: HTTP %d, bad JSON", httpStatus);
     return String(buf);
 }
 
 // --- Grok API call (xAI /v1/responses + web_search tool) ---
 String callGrok(const char* prompt) {
-    // /v1/responses uses "input" array and top-level "instructions" for system prompt
-    JsonDocument reqDoc;
-    reqDoc["model"]        = GROK_MODEL;
-    reqDoc["stream"]       = false;
-    reqDoc["instructions"] = "Respond in 80 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind. Do not mention where information came from. When quoting current or time-sensitive information, use your web search tool to check live sources first.";
-
-    JsonArray input = reqDoc["input"].to<JsonArray>();
-
-    // Conversation history (exclude last entry — that is the current prompt)
-    for (int i = 0; i < historyCount - 1; i++) {
-        if (history[i].displayOnly) continue;
-        JsonObject msg  = input.add<JsonObject>();
-        msg["role"]     = history[i].isUser ? "user" : "assistant";
-        msg["content"]  = history[i].text;
-    }
-
-    // Current prompt
-    JsonObject curMsg  = input.add<JsonObject>();
-    curMsg["role"]     = "user";
-    curMsg["content"]  = prompt;
-
-    // Enable live web search
-    JsonArray tools = reqDoc["tools"].to<JsonArray>();
-    tools.add<JsonObject>()["type"] = "web_search";
-
-    String body;
-    serializeJson(reqDoc, body);
-
     if (WiFi.status() != WL_CONNECTED) {
         connectWiFi(wifiSsid[0], wifiPass[0]);
         if (WiFi.status() != WL_CONNECTED) return "ERR: WiFi not connected";
@@ -1317,22 +1301,45 @@ String callGrok(const char* prompt) {
     client.setInsecure();
     client.setTimeout(API_TIMEOUT_MS / 1000);
 
-    showWaiting("Thinking...");  // re-assert just before blocking TLS handshake
+    showWaiting("Thinking...");
     if (!client.connect(GROK_HOST, HTTPS_PORT)) {
         return "ERR: connect failed (check WiFi/DNS)";
     }
 
-    client.printf(
-        "POST /v1/responses HTTP/1.0\r\n"
-        "Host: " GROK_HOST "\r\n"
-        "Content-Type: application/json\r\n"
-        "Authorization: Bearer %s\r\n"
-        "Content-Length: %d\r\n\r\n",
-        GROK_API_KEY, (int)body.length());
-    client.print(body);
+    // Build + send in inner scope to free reqDoc and body before reading response
+    {
+        JsonDocument reqDoc;
+        reqDoc["model"]        = GROK_MODEL;
+        reqDoc["stream"]       = false;
+        reqDoc["instructions"] = "Respond in 80 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind. Do not mention where information came from. When quoting current or time-sensitive information, use your web search tool to check live sources first.";
 
-    String fullResp = "";
-    // No reserve — let String grow dynamically to minimize peak heap usage
+        JsonArray input = reqDoc["input"].to<JsonArray>();
+        for (int i = 0; i < historyCount - 1; i++) {
+            if (history[i].displayOnly) continue;
+            JsonObject msg  = input.add<JsonObject>();
+            msg["role"]     = history[i].isUser ? "user" : "assistant";
+            msg["content"]  = history[i].text;
+        }
+        JsonObject curMsg  = input.add<JsonObject>();
+        curMsg["role"]     = "user";
+        curMsg["content"]  = prompt;
+        JsonArray tools = reqDoc["tools"].to<JsonArray>();
+        tools.add<JsonObject>()["type"] = "web_search";
+
+        String body;
+        serializeJson(reqDoc, body);
+        client.printf(
+            "POST /v1/responses HTTP/1.0\r\n"
+            "Host: " GROK_HOST "\r\n"
+            "Content-Type: application/json\r\n"
+            "Authorization: Bearer %s\r\n"
+            "Content-Length: %d\r\n\r\n",
+            GROK_API_KEY, (int)body.length());
+        client.print(body);
+        // reqDoc and body freed here
+    }
+
+    String fullResp;
     uint8_t rbuf[256];
     unsigned long deadline  = millis() + API_TIMEOUT_MS;
     unsigned long nextMsgMs = millis() + API_WAIT_FIRST_MS;
@@ -1343,7 +1350,7 @@ String callGrok(const char* prompt) {
         if (n > 0) {
             lastData = millis();
             receivedAny = true;
-            for (int i = 0; i < n; i++) fullResp += (char)rbuf[i];
+            fullResp.concat((const char*)rbuf, n);
             continue;
         }
         if (receivedAny && !client.connected()) break;
@@ -1374,8 +1381,7 @@ String callGrok(const char* prompt) {
 
     int jsonStart = fullResp.indexOf('{');
     if (jsonStart < 0) return "ERR: no JSON in response";
-    String respBody = fullResp.substring(jsonStart);
-    Serial.println("[Grok] JSON body: " + respBody.substring(0, 400));
+    Serial.println("[Grok] JSON body: " + fullResp.substring(jsonStart, jsonStart + 400));
 
     if (httpStatus != 200) {
         char buf[80];
@@ -1384,8 +1390,8 @@ String callGrok(const char* prompt) {
     }
 
     JsonDocument respDoc;
-    if (deserializeJson(respDoc, respBody) != DeserializationError::Ok) {
-        Serial.println("Bad JSON: " + respBody.substring(0, 200));
+    if (deserializeJson(respDoc, fullResp.c_str() + jsonStart) != DeserializationError::Ok) {
+        Serial.println("Bad JSON: " + fullResp.substring(jsonStart, jsonStart + 200));
         return "ERR: JSON parse failed";
     }
 
@@ -1447,33 +1453,6 @@ String callGrok(const char* prompt) {
 
 String callGroq(const char* prompt) {
     // Groq: OpenAI-compatible /openai/v1/chat/completions
-    JsonDocument reqDoc;
-    reqDoc["model"]  = GROQ_MODEL;
-    reqDoc["stream"] = false;
-
-    JsonArray messages = reqDoc["messages"].to<JsonArray>();
-
-    // System prompt
-    JsonObject sysMsgObj = messages.add<JsonObject>();
-    sysMsgObj["role"]    = "system";
-    sysMsgObj["content"] = "Respond in 80 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind.";
-
-    // Conversation history (exclude last entry — current prompt)
-    for (int i = 0; i < historyCount - 1; i++) {
-        if (history[i].displayOnly) continue;
-        JsonObject msg  = messages.add<JsonObject>();
-        msg["role"]     = history[i].isUser ? "user" : "assistant";
-        msg["content"]  = history[i].text;
-    }
-
-    // Current prompt
-    JsonObject curMsg  = messages.add<JsonObject>();
-    curMsg["role"]     = "user";
-    curMsg["content"]  = prompt;
-
-    String body;
-    serializeJson(reqDoc, body);
-
     if (WiFi.status() != WL_CONNECTED) {
         connectWiFi(wifiSsid[0], wifiPass[0]);
         if (WiFi.status() != WL_CONNECTED) return "ERR: WiFi not connected";
@@ -1483,22 +1462,46 @@ String callGroq(const char* prompt) {
     client.setInsecure();
     client.setTimeout(API_TIMEOUT_MS / 1000);
 
-    showWaiting("Thinking...");  // re-assert just before blocking TLS handshake
+    showWaiting("Thinking...");
     if (!client.connect(GROQ_HOST, HTTPS_PORT)) {
         return "ERR: connect failed (check WiFi/DNS)";
     }
 
-    client.printf(
-        "POST /openai/v1/chat/completions HTTP/1.0\r\n"
-        "Host: " GROQ_HOST "\r\n"
-        "Content-Type: application/json\r\n"
-        "Authorization: Bearer %s\r\n"
-        "Content-Length: %d\r\n\r\n",
-        GROQ_API_KEY, (int)body.length());
-    client.print(body);
+    // Build + send in inner scope to free reqDoc and body before reading response
+    {
+        JsonDocument reqDoc;
+        reqDoc["model"]  = GROQ_MODEL;
+        reqDoc["stream"] = false;
 
-    String fullResp = "";
-    // No reserve — let String grow dynamically to minimize peak heap usage
+        JsonArray messages = reqDoc["messages"].to<JsonArray>();
+        JsonObject sysMsgObj = messages.add<JsonObject>();
+        sysMsgObj["role"]    = "system";
+        sysMsgObj["content"] = "Respond in 80 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind.";
+
+        for (int i = 0; i < historyCount - 1; i++) {
+            if (history[i].displayOnly) continue;
+            JsonObject msg  = messages.add<JsonObject>();
+            msg["role"]     = history[i].isUser ? "user" : "assistant";
+            msg["content"]  = history[i].text;
+        }
+        JsonObject curMsg  = messages.add<JsonObject>();
+        curMsg["role"]     = "user";
+        curMsg["content"]  = prompt;
+
+        String body;
+        serializeJson(reqDoc, body);
+        client.printf(
+            "POST /openai/v1/chat/completions HTTP/1.0\r\n"
+            "Host: " GROQ_HOST "\r\n"
+            "Content-Type: application/json\r\n"
+            "Authorization: Bearer %s\r\n"
+            "Content-Length: %d\r\n\r\n",
+            GROQ_API_KEY, (int)body.length());
+        client.print(body);
+        // reqDoc and body freed here
+    }
+
+    String fullResp;
     uint8_t rbuf[256];
     unsigned long deadline  = millis() + API_TIMEOUT_MS;
     unsigned long nextMsgMs = millis() + API_WAIT_FIRST_MS;
@@ -1509,7 +1512,7 @@ String callGroq(const char* prompt) {
         if (n > 0) {
             lastData = millis();
             receivedAny = true;
-            for (int i = 0; i < n; i++) fullResp += (char)rbuf[i];
+            fullResp.concat((const char*)rbuf, n);
             continue;
         }
         if (receivedAny && !client.connected()) break;
@@ -1540,8 +1543,7 @@ String callGroq(const char* prompt) {
 
     int jsonStart = fullResp.indexOf('{');
     if (jsonStart < 0) return "ERR: no JSON in response";
-    String respBody = fullResp.substring(jsonStart);
-    Serial.println("[Groq] JSON body: " + respBody.substring(0, 400));
+    Serial.println("[Groq] JSON body: " + fullResp.substring(jsonStart, jsonStart + 400));
 
     if (httpStatus != 200) {
         char buf[80];
@@ -1550,8 +1552,8 @@ String callGroq(const char* prompt) {
     }
 
     JsonDocument respDoc;
-    if (deserializeJson(respDoc, respBody) != DeserializationError::Ok) {
-        Serial.println("Bad JSON: " + respBody.substring(0, 200));
+    if (deserializeJson(respDoc, fullResp.c_str() + jsonStart) != DeserializationError::Ok) {
+        Serial.println("Bad JSON: " + fullResp.substring(jsonStart, jsonStart + 200));
         return "ERR: JSON parse failed";
     }
 
@@ -1576,7 +1578,7 @@ void showThinking() {
         int lineH  = LINE_H_LARGE;
         int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;
         uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-        tft.fillRect(0, inputY, SCREEN_W, lineH, bg);
+        tft.fillRect(0, inputY, SCREEN_W, SCREEN_H - inputY, bg);  // fill to screen bottom
         fontOn();
         tft.setTextColor(TFT_DARKGREY, bg);
         tft.drawString("Thinking...", 2, inputY);
@@ -1828,6 +1830,12 @@ void setup() {
     uiFontOff();
 
     selectModel();  // draws choices at y=30+ and waits for 1/2/3
+
+    // Render the initial chat page with the correct theme.
+    // selectModel() leaves a transient "Ready." display; drawHistory() replaces it
+    // with the properly-themed chat layout (blank + input prompt at bottom).
+    rebuildLines();
+    drawHistory();
 }
 
 void checkWiFiHealth() {
@@ -1863,7 +1871,7 @@ void loop() {
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
 #ifdef TARGET_C3
-                int visSlots  = maxVis - 1;  // last slot is input line
+                int visSlots  = maxVis - 2;  // slot 0 = heading, last = input
 #else
                 int visSlots  = maxVis;
 #endif
@@ -1876,7 +1884,7 @@ void loop() {
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
 #ifdef TARGET_C3
-                int visSlots  = maxVis - 1;  // last slot is input line
+                int visSlots  = maxVis - 2;  // slot 0 = heading, last = input
 #else
                 int visSlots  = maxVis;
 #endif
@@ -1898,7 +1906,6 @@ do_new_conv:
 #ifndef TARGET_C3
                 kbVisible = true;
 #endif
-                tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
                 drawHistory(); drawInputBar();
 #ifndef TARGET_C3
                 drawKeyboard();

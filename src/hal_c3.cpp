@@ -13,6 +13,7 @@
 
 // External TFT for status display during init
 extern TFT_eSPI tft;
+#include "fonts/DejaVuSansBold12px.h"
 
 // --- BLE UUIDs ---
 static const NimBLEUUID HID_SVC_UUID("1812");
@@ -208,14 +209,23 @@ static bool doConnect(const NimBLEAddress& addr, uint8_t connectTimeoutSec) {
     bleClient->setConnectTimeout(connectTimeoutSec);
     Serial.printf("[BLE] connecting to %s...\n", addr.toString().c_str());
     if (!bleClient->connect(addr)) {
-        // May be directed advertising or stale bond — clear bonds, wait for keyboard
-        // to switch from directed to undirected advertising (~1.3s), then retry
+        if (connectTimeoutSec <= 3) {
+            // Boot-time fast try (3s) — keyboard likely asleep, fall through to scan
+            Serial.println("[BLE] boot connect failed, falling through to scan");
+            NimBLEDevice::deleteClient(bleClient);
+            bleClient = nullptr;
+            return false;
+        }
+        // Reconnect task: keyboard may still be in directed-advertising mode toward
+        // our old address. Wait for it to time out and switch to undirected (~1.3s),
+        // then retry WITHOUT deleting bonds — the bond is almost certainly still valid.
+        // deleteAllBonds() is intentionally omitted here: wiping bonds on every failed
+        // connect was the primary cause of having to re-pair on every boot.
         Serial.printf("[BLE] connect() failed (our addr=%s type=%d), waiting for undirected...\n",
             NimBLEDevice::getAddress().toString().c_str(),
             NimBLEDevice::getAddress().getType());
-        NimBLEDevice::deleteAllBonds();  // clear ALL stale bonds
         NimBLEDevice::deleteClient(bleClient);
-        vTaskDelay(pdMS_TO_TICKS(1500));  // wait for keyboard to switch to undirected advertising
+        vTaskDelay(pdMS_TO_TICKS(1500));
         bleClient = NimBLEDevice::createClient();
         bleClient->setClientCallbacks(new ClientCB(), false);
         bleClient->setConnectTimeout(connectTimeoutSec);
@@ -251,8 +261,14 @@ class ScanCB : public NimBLEScanCallbacks {
         if (!isHID && !isKB) return;  // accept HID service OR keyboard name (directed adv has no UUID)
         NimBLEDevice::getScan()->stop();
         bondedAddr = dev->getAddress();
-        hasBonded  = true;
-        saveBondedAddress(bondedAddr);
+        if (!hasBonded) {
+            // First-time pairing only: persist the address.
+            // On reconnects the address may be a rotating private address; NimBLE
+            // resolves it via IRK from its own bond store — no NVS write needed.
+            hasBonded = true;
+            saveBondedAddress(bondedAddr);
+            Serial.println("[BLE scan] new keyboard — address saved");
+        }
         Serial.println("[BLE scan] HID found — flagging for connect");
         wantConnect = true;  // connect from main loop, not from callback
     }
@@ -290,10 +306,10 @@ void halInit() {
     if (!connected) {
         // Display waiting message
         Serial.println("[C3 BLE] Drawing waiting text on display...");
-        tft.setTextSize(2);
+        tft.loadFont(DejaVuSansBold12pxData);
         tft.setTextColor(0xFFFF, 0x0841);
-        tft.setCursor(10, 10); tft.print("Waiting for BLE");
-        tft.setCursor(10, 30); tft.print("keyboard...");
+        tft.drawString("Waiting for BLE keyboard...", 10, 10);
+        tft.unloadFont();
         Serial.println("[C3 BLE] Waiting text drawn. Starting BLE scan...");
 
         setupScan();
