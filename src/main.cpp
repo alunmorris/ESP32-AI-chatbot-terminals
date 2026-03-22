@@ -1,4 +1,4 @@
-// SLUG AI chatbot for CYD28 (ESP32-2432S028R)
+// Cheap AI Chat Keyboard — ESP32-C3 + CYD28
 // 090326 Key click: 4 kHz squarewave 10 ms on GPIO 26 speaker (LEDC ch 3)
 // 040326 Unicode fonts: VLW smooth fonts, Latin Extended + special chars, remove transliteration
 // 030326 Touch calibration: key C at boot, 2-point crosshair, saved to NVS
@@ -30,8 +30,6 @@
 #include <TFT_eSPI.h>
 #include "fonts/DejaVuSansBold12px.h"  // VLW smooth font 12px (Unicode)
 #include "fonts/DejaVuSansBold8px.h"   // VLW smooth font 10px (Unicode)
-#include "images/splash.h"             // SLUG splash 320x117 RGB565
-#include "images/slugsmall.h"          // SLUGsmall 144x96 RGB565 with transparency
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
@@ -47,8 +45,8 @@ char        GEMINI_MODEL[48]  = "gemini-3.1-pro-preview"; // overwritten at boot
 bool        geminiUseGlobal   = false;  // true → /locations/global/ in path
 bool        useGrok           = false;  // true → route to Grok (xAI) instead of Gemini
 bool        useGroq           = false;  // true → route to Groq instead of Gemini
-bool        largeFont         = false;  // true → DejaVuSansBold12px in history area
-bool        invertDisplay     = false;  // true → light grey bg, black text in history area
+// largeFont removed — always use DejaVuSansBold12px everywhere
+bool        invertDisplay     = true;   // true = Light Theme (light bg, black text)
 #define COL_INVERT_BG   0xC618          // light grey (~RGB 192,192,192)
 
 // --- WiFi credential store (NVS, up to 9 slots, slot 0 = most-recently-used) ---
@@ -152,6 +150,10 @@ void clearWifiPass(const char* ssid) {
 #define HIST_H_KB_HIDE  220
 #define IBAR_Y_KB_HIDE  220
 #define IBAR_H_KB_HIDE   20
+#ifdef TARGET_C3
+#undef  HIST_H_KB_HIDE
+#define HIST_H_KB_HIDE  SCREEN_H   // C3: no separate input bar — full screen is chat + input line
+#endif
 
 // --- Colours ---
 #define COL_BG          0x0841   // #080808 — nearest RGB565 to #0D0D0D
@@ -167,8 +169,8 @@ void clearWifiPass(const char* ssid) {
 
 // --- UI text metrics: must match uiFontOn() ---
 #ifdef TARGET_C3
-#define TXT_W  12   // GLCD size-2: 12px char width
-#define TXT_H  16   // GLCD size-2: 16px char height
+#define TXT_W   8   // DejaVuSansBold12px average char width (proportional)
+#define TXT_H  14   // DejaVuSansBold12px line height (matches LINE_H_LARGE)
 #else
 #define TXT_W  6    // GLCD size-1: 6px char width
 #define TXT_H  8    // GLCD size-1: 8px char height
@@ -258,19 +260,18 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define GROQ_HOST         "api.groq.com"
 #define GROQ_MODEL        "openai/gpt-oss-120b"
 
-// fontOn() loads 12px bold smooth font. fontOff() unloads whatever font is loaded.
-// Call sites needing 10px load it directly via tft.loadFont(DejaVuSansBold8pxData).
+// fontOn() loads 12px bold smooth font. fontOff() unloads and restores GLCD.
 void fontOn()  { tft.loadFont(DejaVuSansBold12pxData); }
 void fontOff() { tft.unloadFont(); tft.setTextFont(1); }  // always restore GLCD explicitly
 
-// UI text helpers: C3 uses GLCD size 2 (12×16px) — size 1 is unreadable on that display.
-// CYD28 uses GLCD size 1 (6×8px).
+// UI text helpers: C3 uses smooth font everywhere. CYD28 uses GLCD size 1 (6×8px).
 #ifdef TARGET_C3
-inline void uiFontOn()  { tft.setTextSize(2); }
+inline void uiFontOn()  { fontOn(); }
+inline void uiFontOff() { fontOff(); }
 #else
 inline void uiFontOn()  { tft.setTextSize(1); }
-#endif
 inline void uiFontOff() {}
+#endif
 
 void drawKey(int x, int y, int w, int h, const char* label, uint16_t face, uint16_t text) {
     tft.fillRect(x, y, w, h, COL_BG);  // clear cell; COL_BG shows as border around inset box
@@ -404,63 +405,89 @@ int  inputLen      = 0;
 bool moreMode      = false;  // true after AI reply → button shows "More"
 
 void drawInputBar() {
+#ifdef TARGET_C3
+    // On C3 the input prompt is the last line of the chat area (no separate bar).
+    // drawHistory() renders it as part of the history display; this function
+    // redraws just that last slot when only the input text changes.
+    {
+        int lineH  = LINE_H_LARGE;
+        int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;
+        uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+        TFT_eSprite spr(&tft);
+        spr.setColorDepth(16);
+        if (spr.createSprite(SCREEN_W, lineH)) {
+            spr.loadFont(DejaVuSansBold12pxData);
+            spr.fillSprite(bg);
+            spr.setTextColor(wifiHealthy ? TFT_DARKGREY : TFT_RED, bg);
+            spr.drawString("> ", 2, 0);
+            int promptW = spr.textWidth("> ");
+            spr.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
+            int availW = SCREEN_W - promptW - 4;
+            int start = 0;
+            if (inputLen > 0) {
+                start = inputLen;
+                while (start > 0) {
+                    char tmp[INPUT_BUF_SIZE];
+                    strncpy(tmp, inputBuf + start - 1, inputLen - start + 1);
+                    tmp[inputLen - start + 1] = '\0';
+                    if (spr.textWidth(tmp) > availW) break;
+                    start--;
+                }
+            }
+            char dispBuf[INPUT_BUF_SIZE] = {0};
+            strncpy(dispBuf, inputBuf + start, inputLen - start);
+            spr.drawString(dispBuf, 2 + promptW, 0);
+            spr.unloadFont();
+            spr.pushSprite(0, inputY);
+            spr.deleteSprite();
+        } else {
+            // Direct fallback
+            tft.fillRect(0, inputY, SCREEN_W, lineH, bg);
+            fontOn();
+            tft.setTextColor(wifiHealthy ? TFT_DARKGREY : TFT_RED, bg);
+            tft.drawString("> ", 2, inputY);
+            int promptW = tft.textWidth("> ");
+            tft.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
+            int maxChars = (SCREEN_W - (int)promptW - 4) / TXT_W;
+            char dispBuf[INPUT_BUF_SIZE] = {0};
+            int start = (inputLen > maxChars) ? inputLen - maxChars : 0;
+            strncpy(dispBuf, inputBuf + start, inputLen - start);
+            tft.drawString(dispBuf, 2 + promptW, inputY);
+            fontOff();
+        }
+        return;
+    }
+#endif
+    // CYD28: traditional input bar at bottom of screen
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
 
-#ifdef TARGET_C3
-    // Render input bar to a sprite to avoid SPI register sync issues on C3
-    TFT_eSprite spr(&tft);
-    spr.setColorDepth(16);
-    spr.createSprite(SCREEN_W, barH);
-    spr.fillSprite(COL_IBAR_BG);
-
-    // Prompt marker
-    spr.setTextSize(2);
-    spr.setTextColor(wifiHealthy ? COL_IBAR_TEXT : TFT_RED, COL_IBAR_BG);
-    spr.setCursor(2, (barH - TXT_H) / 2);
-    spr.print("> ");
-    spr.setTextColor(COL_IBAR_TEXT, COL_IBAR_BG);
-
-    // Input text
-    int maxChars = (SCREEN_W - BTN_SEND_W - 14) / TXT_W;
-    char display[54] = {0};
-    int start = (inputLen > maxChars) ? inputLen - maxChars : 0;
-    strncpy(display, inputBuf + start, maxChars);
-    spr.print(display);
-
-    // Send / More button
-    spr.setTextSize(1);
-    spr.fillRect(SCREEN_W - BTN_SEND_W, BTN_INSET, BTN_SEND_W - BTN_INSET*2, barH - BTN_INSET*2, COL_BTN_BG);
-    spr.setTextColor(wifiHealthy ? COL_BTN_TEXT : TFT_RED, COL_BTN_BG);
-    spr.setCursor(SCREEN_W - BTN_SEND_X_TEXT, (barH - 8) / 2);
-    spr.print(moreMode ? "More" : "Send");
-
-    spr.pushSprite(0, barY);
-    spr.deleteSprite();
-#else
     tft.fillRect(0, barY, SCREEN_W, barH, COL_IBAR_BG);
+
+    // Ensure smooth font is cleared — rebuildLines may leave it loaded on tft
+    tft.unloadFont();
+    tft.setTextFont(1);
 
     // Prompt marker — red when WiFi health check fails
     tft.setTextColor(wifiHealthy ? COL_IBAR_TEXT : TFT_RED, COL_IBAR_BG);
     uiFontOn();
     tft.setCursor(2, barY + (barH - TXT_H) / 2);
     tft.print("> ");
-    tft.setTextColor(COL_IBAR_TEXT, COL_IBAR_BG);  // restore white for input text
+    tft.setTextColor(COL_IBAR_TEXT, COL_IBAR_BG);
 
-    // Input text (truncate if too long to fit)
-    int maxChars = (SCREEN_W - BTN_SEND_W - 14) / TXT_W;  // leave room for Send button
+    int maxChars = (SCREEN_W - BTN_SEND_W - 14) / TXT_W;
     char display[54] = {0};
     int start = (inputLen > maxChars) ? inputLen - maxChars : 0;
     strncpy(display, inputBuf + start, maxChars);
     tft.print(display);
-    uiFontOff();  // restore GLCD before button text
 
-    // Send / More button — always GLCD size 1 to fit in button
-    tft.setTextSize(1);
+    // Button
     tft.fillRect(SCREEN_W - BTN_SEND_W, barY + BTN_INSET, BTN_SEND_W - BTN_INSET*2, barH - BTN_INSET*2, COL_BTN_BG);
     tft.setTextColor(wifiHealthy ? COL_BTN_TEXT : TFT_RED, COL_BTN_BG);
-    tft.setCursor(SCREEN_W - BTN_SEND_X_TEXT, barY + (barH - 8) / 2);
-    tft.print(moreMode ? "More" : "Send");
+    const char* btnLbl = moreMode ? "More" : "Send";
+    int bw = tft.textWidth(btnLbl);
+    tft.drawString(btnLbl, SCREEN_W - BTN_SEND_W + (BTN_SEND_W - bw) / 2, barY + (barH - TXT_H) / 2);
+    uiFontOff();
 
     if (!kbVisible) {
         tft.fillRect(SCREEN_W - BTN_SHOWKB_X, barY + BTN_INSET, BTN_SHOWKB_W, barH - BTN_INSET*2, COL_BTN_BG);
@@ -473,7 +500,6 @@ void drawInputBar() {
         tft.setCursor(SCREEN_W - BTN_NEW_X + 4, barY + (barH - 8) / 2);
         tft.print("New");
     }
-#endif
 }
 
 // --- Conversation history ---
@@ -512,61 +538,9 @@ void rebuildLines() {
         bool isUser = history[m].isUser;
         const char* full = history[m].text;
 
-        if (largeFont) {
-            // Pixel-width word wrap for DejaVuSansBold12px
+        {
+            // Pixel-width word wrap using smooth font (DejaVuSansBold12px)
             fontOn();
-            char lineBuf[128] = "";
-            const char* p = full;
-            while (*p && lineCount < MAX_LINES - 1) {
-                if (*p == '\n') {
-                    // Only flush if there's content — skip blank lines to
-                    // avoid wasting the small number of visible large-font slots
-                    if (lineBuf[0]) {
-                        strncpy(lines[lineCount], lineBuf, 127);
-                        lines[lineCount][127] = '\0';
-                        lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
-                        lineBuf[0] = '\0';
-                    }
-                    p++;
-                    continue;
-                }
-                // Extract next word
-                const char* ws = p;
-                while (*p && *p != ' ' && *p != '\n') p++;
-                int wlen = p - ws;
-                if (wlen <= 0) { if (*p) p++; continue; }
-                char word[128];
-                strncpy(word, ws, min(wlen, 127));
-                word[min(wlen, 127)] = '\0';
-                if (*p == ' ') p++;
-                // Test word on current line
-                char test[260];   // lineBuf(127) + space(1) + word(127) + null
-                if (lineBuf[0]) snprintf(test, 260, "%s %s", lineBuf, word);
-                else            { strncpy(test, word, 127); test[127] = '\0'; }
-                if (tft.textWidth(test) <= SCREEN_W - 2) {
-                    strncpy(lineBuf, test, 127); lineBuf[127] = '\0';
-                } else {
-                    if (lineBuf[0]) {
-                        strncpy(lines[lineCount], lineBuf, 127);
-                        lines[lineCount][127] = '\0';
-                        lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
-                        strncpy(lineBuf, word, 127); lineBuf[127] = '\0';
-                    } else {
-                        strncpy(lines[lineCount], word, 127);
-                        lines[lineCount][127] = '\0';
-                        lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
-                    }
-                }
-            }
-            if (lineBuf[0] && lineCount < MAX_LINES) {
-                strncpy(lines[lineCount], lineBuf, 127);
-                lines[lineCount][127] = '\0';
-                lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
-            }
-            fontOff();
-        } else {
-            // Pixel-width word wrap for DejaVuSansBold10px
-            tft.loadFont(DejaVuSansBold8pxData);
             char lineBuf[128] = "";
             const char* p = full;
             while (*p && lineCount < MAX_LINES - 1) {
@@ -591,7 +565,7 @@ void rebuildLines() {
                 char test[260];
                 if (lineBuf[0]) snprintf(test, 260, "%s %s", lineBuf, word);
                 else            { strncpy(test, word, 127); test[127] = '\0'; }
-                if (tft.textWidth(test) <= SCREEN_W - 2) {
+                if (tft.textWidth(test) <= SCREEN_W - 4) {
                     strncpy(lineBuf, test, 127); lineBuf[127] = '\0';
                 } else {
                     if (lineBuf[0]) {
@@ -611,7 +585,7 @@ void rebuildLines() {
                 lines[lineCount][127] = '\0';
                 lineColor[lineCount] = col; lineIsUser[lineCount++] = isUser;
             }
-            tft.unloadFont();
+            fontOff();
         }
     }
 }
@@ -619,48 +593,101 @@ void rebuildLines() {
 void drawHistory() {
     int histH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
     uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-    int lineH  = largeFont ? LINE_H_LARGE : LINE_H_SMALL;
+    int lineH  = LINE_H_LARGE;
     int maxVis = histH / lineH;
 
-    int firstIdx = lineCount - maxVis - scrollOffset;
+    // On C3 the last history slot is reserved for the inline input prompt.
+    int histSlots = maxVis;
+#ifdef TARGET_C3
+    histSlots = maxVis - 1;
+#endif
+    int firstIdx = lineCount - histSlots - scrollOffset;
     if (firstIdx < 0) firstIdx = 0;
 
+#ifdef TARGET_C3
     // Render each line to a RAM sprite, then push to display in one SPI block.
     // This avoids repeated setWindow/pushBlock transitions that cause partial
     // screen updates on ESP32-C3 (SPI register sync issue without DMA).
+    // Falls back to direct TFT drawing if heap is too fragmented.
     TFT_eSprite spr(&tft);
     spr.setColorDepth(16);
-    spr.createSprite(SCREEN_W, lineH);
-    if (largeFont) spr.loadFont(DejaVuSansBold12pxData);
-    else           spr.loadFont(DejaVuSansBold8pxData);
-    spr.setTextWrap(false);
+    if (spr.createSprite(SCREEN_W, lineH)) {
+        spr.loadFont(DejaVuSansBold12pxData);
+        spr.setTextWrap(false);
 
-    for (int i = 0; i < maxVis; i++) {
-        spr.fillSprite(bg);
-        if ((firstIdx + i) < lineCount) {
-            int idx = firstIdx + i;
-            uint16_t col = lineColor[idx];
-            if (invertDisplay) col = TFT_BLACK;
-            spr.setTextColor(col, bg);
-            if (lineIsUser[idx]) {
-                spr.setTextDatum(TR_DATUM);
-                spr.drawString(lines[idx], SCREEN_W, 0);
-                spr.setTextDatum(TL_DATUM);
-            } else {
-                spr.drawString(lines[idx], 0, 0);
+        for (int i = 0; i < histSlots; i++) {
+            spr.fillSprite(bg);
+            if ((firstIdx + i) < lineCount) {
+                int idx = firstIdx + i;
+                uint16_t col = lineColor[idx];
+                if (invertDisplay) col = TFT_BLACK;
+                spr.setTextColor(col, bg);
+                if (lineIsUser[idx]) {
+                    spr.setTextDatum(TR_DATUM);
+                    spr.drawString(lines[idx], SCREEN_W, 0);
+                    spr.setTextDatum(TL_DATUM);
+                } else {
+                    spr.drawString(lines[idx], 2, 0);
+                }
             }
+            spr.pushSprite(0, i * lineH);
         }
-        spr.pushSprite(0, i * lineH);
-    }
 
-    spr.unloadFont();
-    spr.deleteSprite();
+        // Input line — always the last visible slot
+        {
+            spr.fillSprite(bg);
+            spr.setTextColor(wifiHealthy ? TFT_DARKGREY : TFT_RED, bg);
+            spr.drawString("> ", 2, 0);
+            int promptW = spr.textWidth("> ");
+            spr.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
+            int availW = SCREEN_W - promptW - 4;
+            int start = 0;
+            if (inputLen > 0) {
+                start = inputLen;
+                while (start > 0) {
+                    char tmp[INPUT_BUF_SIZE];
+                    strncpy(tmp, inputBuf + start - 1, inputLen - start + 1);
+                    tmp[inputLen - start + 1] = '\0';
+                    if (spr.textWidth(tmp) > availW) break;
+                    start--;
+                }
+            }
+            char dispBuf[INPUT_BUF_SIZE] = {0};
+            strncpy(dispBuf, inputBuf + start, inputLen - start);
+            spr.drawString(dispBuf, 2 + promptW, 0);
+            spr.pushSprite(0, histSlots * lineH);
+        }
 
-    // Clear any remaining pixels below the last line
-    int usedH = maxVis * lineH;
-    if (usedH < histH) {
-        tft.fillRect(0, usedH, SCREEN_W, histH - usedH, bg);
+        spr.unloadFont();
+        spr.deleteSprite();
+
+        int usedH = maxVis * lineH;
+        if (usedH < histH)
+            tft.fillRect(0, usedH, SCREEN_W, histH - usedH, bg);
+        return;
     }
+    // Sprite alloc failed — fall through to direct TFT drawing
+#endif
+
+    tft.fillRect(0, 0, SCREEN_W, histH, bg);
+
+    fontOn();
+    tft.setTextWrap(false);
+    for (int i = 0; i < maxVis && (firstIdx + i) < lineCount; i++) {
+        int idx = firstIdx + i;
+        uint16_t col = lineColor[idx];
+        if (invertDisplay) col = TFT_BLACK;
+        tft.setTextColor(col, bg);
+        if (lineIsUser[idx]) {
+            tft.setTextDatum(TR_DATUM);
+            tft.drawString(lines[idx], SCREEN_W, i * lineH);
+            tft.setTextDatum(TL_DATUM);
+        } else {
+            tft.drawString(lines[idx], 2, i * lineH);
+        }
+    }
+    tft.setTextWrap(true);
+    fontOff();
 }
 
 // Returns true if codepoint cp is covered by the VLW font.
@@ -767,9 +794,9 @@ void enterPassword(const char* ssidPrompt, char* out) {
     fontOff();
     uiFontOn();
     tft.setTextColor(TFT_YELLOW, COL_BG);
-    tft.setCursor(0, 0);       tft.print("Password for:");
+    tft.drawString("Password for:", 2, 0);
     tft.setTextColor(TFT_WHITE, COL_BG);
-    tft.setCursor(0, TXT_H);   tft.print(ssidPrompt);
+    tft.drawString(ssidPrompt, 2, TXT_H);
     uiFontOff();
     drawInputBar();
 #ifndef TARGET_C3
@@ -825,7 +852,7 @@ bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
         tft.setTextColor(TFT_NAVY, TFT_WHITE);
         char wifiMsg[80];
         snprintf(wifiMsg, sizeof(wifiMsg), "Connecting: %.55s...", ssid);
-        tft.drawString(wifiMsg, 0, 0);
+        tft.drawString(wifiMsg, 2, 0);
         fontOff();
     }
     WiFi.mode(WIFI_STA);
@@ -851,13 +878,13 @@ void selectAP() {
         WiFi.disconnect(true);  // ensure clean idle state before scan (prev. begin() may leave driver busy)
         tft.fillScreen(COL_BG);
         fontOff(); uiFontOn(); tft.setTextColor(TFT_YELLOW, COL_BG);
-        tft.setCursor(0, 0); tft.print("Scanning WiFi...");
+        tft.drawString("Scanning WiFi...", 2, 0);
 
         int n = WiFi.scanNetworks();
 
         if (n <= 0) {
             tft.fillScreen(COL_BG);
-            tft.setCursor(0, 0); tft.print("No networks found. Tap to retry.");
+            tft.drawString("No networks found. Tap to retry.", 2, 0);
             { InputEvent ev; while (!halPollInput(&ev)) delay(10); }
             continue;
         }
@@ -911,9 +938,10 @@ void selectAP() {
 
             // Show connecting
             tft.fillScreen(COL_BG);
-            fontOff(); tft.setTextColor(TFT_BLUE, COL_BG);
+            uiFontOn(); tft.setTextColor(TFT_BLUE, COL_BG);
             char msg[80]; snprintf(msg, sizeof(msg), "Connecting: %.55s...", selSsid);
-            tft.setCursor(0, 0); tft.print(msg);
+            tft.drawString(msg, 2, 0);
+            uiFontOff();
 
             bool ok = connectWiFi(selSsid, pass);
 
@@ -924,10 +952,10 @@ void selectAP() {
 
             // --- Failed: offer re-enter or new scan ---
             tft.fillScreen(COL_BG);
-            fontOff();
+            uiFontOn();
             tft.setTextColor(TFT_RED, COL_BG);
             char failMsg[64]; snprintf(failMsg, sizeof(failMsg), "Failed: %.40s", selSsid);
-            tft.setCursor(2, (AP_ROW_H - 8) / 2); tft.print(failMsg);
+            tft.drawString(failMsg, 2, (AP_ROW_H - TXT_H) / 2);
 
             // Draw two option rows (same style as AP list)
             static const char* opts[] = { "1  Re-enter password", "2  New scan" };
@@ -935,9 +963,9 @@ void selectAP() {
                 int y = AP_ROW_H * (i + 1);
                 tft.fillRect(0, y, SCREEN_W, AP_ROW_H - 1, COL_KEY_FACE);
                 tft.setTextColor(COL_KEY_LABEL, COL_KEY_FACE);
-                tft.setCursor(2, y + (AP_ROW_H - 8) / 2);
-                tft.print(opts[i]);
+                tft.drawString(opts[i], 2, y + (AP_ROW_H - TXT_H) / 2);
             }
+            uiFontOff();
 
             // Wait for key 1 or 2
             int choice = 0;
@@ -1019,13 +1047,26 @@ static const int NUM_WAIT_MSGS = sizeof(WAIT_MSGS) / sizeof(WAIT_MSGS[0]);
 int waitMsgIdx = 0;  // persistent — keeps rotating across calls
 
 void showWaiting(const char* msg) {
+#ifdef TARGET_C3
+    {
+        int lineH  = LINE_H_LARGE;
+        int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;
+        uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+        tft.fillRect(0, inputY, SCREEN_W, lineH, bg);
+        fontOn();
+        tft.setTextColor(TFT_DARKGREY, bg);
+        tft.drawString(msg, 2, inputY);
+        fontOff();
+        return;
+    }
+#endif
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
     tft.fillRect(0, barY, SCREEN_W - BTN_SEND_W, barH, COL_IBAR_BG);
     tft.setTextColor(TFT_DARKGREY, COL_IBAR_BG);
-    tft.loadFont(DejaVuSansBold8pxData);
-    tft.drawString(msg, 2, barY + (barH - LINE_H_SMALL) / 2);
-    tft.unloadFont();
+    fontOn();
+    tft.drawString(msg, 2, barY + (barH - TXT_H) / 2);
+    fontOff();
 }
 
 // Extract the body from a raw HTTP response, decoding chunked transfer encoding if present.
@@ -1071,7 +1112,7 @@ String callGemini(const char* prompt) {
     JsonObject sysInstr = reqDoc["system_instruction"].to<JsonObject>();
     JsonArray  sysParts = sysInstr["parts"].to<JsonArray>();
     JsonObject sysPart  = sysParts.add<JsonObject>();
-    sysPart["text"]     = "Respond in 150 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols. Use paragraphs to separate distinct ideas. Never include URLs or hyperlinks. When quoting current or time-sensitive information, use your search tool to check live sources first.";
+    sysPart["text"]     = "Respond in 80 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols. Use paragraphs to separate distinct ideas. Never include URLs or hyperlinks. When quoting current or time-sensitive information, use your search tool to check live sources first.";
 
     JsonArray contents = reqDoc["contents"].to<JsonArray>();
 
@@ -1193,29 +1234,48 @@ String callGemini(const char* prompt) {
     JsonDocument respDoc;
     DeserializationError derr = deserializeJson(respDoc, jsonBody.c_str() + jsonStart,
                                                 DeserializationOption::Filter(filter));
-    if (derr != DeserializationError::Ok && derr != DeserializationError::IncompleteInput) {
-        Serial.println("Bad JSON (HTTP " + String(httpStatus) + "): " + jsonBody.substring(jsonStart, jsonStart + 300) + " err=" + derr.c_str());
-        char buf[40]; snprintf(buf, sizeof(buf), "ERR: HTTP %d, bad JSON", httpStatus);
-        return String(buf);
-    }
-    if (derr == DeserializationError::IncompleteInput) {
-        // JSON truncated (large grounding metadata) — text field is early in the response
-        // and should already be captured; fall through and try to use it
-        Serial.printf("[Gemini] truncated JSON (%d bytes), trying partial\n", jsonBody.length());
-    }
+    if (derr == DeserializationError::Ok || derr == DeserializationError::IncompleteInput) {
+        // IncompleteInput is normal: Gemini appends large metadata after the text field;
+        // SSL close_notify arrives before all of it. Text is captured before truncation.
+        const char* errMsg = respDoc["error"]["message"];
+        if (errMsg) {
+            char buf[80]; snprintf(buf, sizeof(buf), "ERR: %.72s", errMsg);
+            return String(buf);
+        }
 
-    // Check for API error
-    const char* errMsg = respDoc["error"]["message"];
-    if (errMsg) {
-        char buf[80];
-        snprintf(buf, sizeof(buf), "ERR: %.72s", errMsg);
-        return String(buf);
+        const char* text = respDoc["candidates"][0]["content"]["parts"][0]["text"];
+        if (text) return String(text);
     }
 
-    const char* text = respDoc["candidates"][0]["content"]["parts"][0]["text"];
-    if (!text) return "ERR: no text in response";
+    // JSON parse failed or text field not captured (truncated mid-string) —
+    // manually extract "text": "..." from the raw response
+    Serial.printf("[Gemini] JSON err=%s, trying manual extract\n", derr.c_str());
+    const char* raw = jsonBody.c_str() + jsonStart;
+    const char* marker = strstr(raw, "\"text\": \"");
+    if (!marker) marker = strstr(raw, "\"text\":\"");
+    if (marker) {
+        const char* start = strchr(marker + 6, '"') + 1;  // skip past opening quote
+        // Scan for unescaped closing quote or end of data
+        String result;
+        const char* p = start;
+        while (*p) {
+            if (*p == '\\' && *(p+1)) { result += *p++; result += *p++; continue; }
+            if (*p == '"') break;
+            result += *p++;
+        }
+        // Unescape JSON string escapes
+        result.replace("\\n", "\n");
+        result.replace("\\\"", "\"");
+        result.replace("\\\\", "\\");
+        if (result.length() > 0) {
+            Serial.printf("[Gemini] manual extract OK (%d chars)\n", result.length());
+            return result;
+        }
+    }
 
-    return String(text);
+    Serial.println("Bad JSON (HTTP " + String(httpStatus) + "): " + jsonBody.substring(jsonStart, jsonStart + 300) + " err=" + derr.c_str());
+    char buf[40]; snprintf(buf, sizeof(buf), "ERR: HTTP %d, bad JSON", httpStatus);
+    return String(buf);
 }
 
 // --- Grok API call (xAI /v1/responses + web_search tool) ---
@@ -1224,7 +1284,7 @@ String callGrok(const char* prompt) {
     JsonDocument reqDoc;
     reqDoc["model"]        = GROK_MODEL;
     reqDoc["stream"]       = false;
-    reqDoc["instructions"] = "Respond in 150 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind. Do not mention where information came from. When quoting current or time-sensitive information, use your web search tool to check live sources first.";
+    reqDoc["instructions"] = "Respond in 80 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind. Do not mention where information came from. When quoting current or time-sensitive information, use your web search tool to check live sources first.";
 
     JsonArray input = reqDoc["input"].to<JsonArray>();
 
@@ -1396,7 +1456,7 @@ String callGroq(const char* prompt) {
     // System prompt
     JsonObject sysMsgObj = messages.add<JsonObject>();
     sysMsgObj["role"]    = "system";
-    sysMsgObj["content"] = "Respond in 150 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind.";
+    sysMsgObj["content"] = "Respond in 80 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind.";
 
     // Conversation history (exclude last entry — current prompt)
     for (int i = 0; i < historyCount - 1; i++) {
@@ -1511,19 +1571,32 @@ String callGroq(const char* prompt) {
 
 // --- Send flow ---
 void showThinking() {
+#ifdef TARGET_C3
+    {
+        int lineH  = LINE_H_LARGE;
+        int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;
+        uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+        tft.fillRect(0, inputY, SCREEN_W, lineH, bg);
+        fontOn();
+        tft.setTextColor(TFT_DARKGREY, bg);
+        tft.drawString("Thinking...", 2, inputY);
+        fontOff();
+        return;
+    }
+#endif
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
     tft.fillRect(0, barY, SCREEN_W - BTN_SEND_W, barH, COL_IBAR_BG);
     tft.setTextColor(TFT_DARKGREY, COL_IBAR_BG);
-    tft.loadFont(DejaVuSansBold8pxData);
-    tft.drawString("Thinking...", 2, barY + (barH - LINE_H_SMALL) / 2);
-    tft.unloadFont();
+    fontOn();
+    tft.drawString("Thinking...", 2, barY + (barH - TXT_H) / 2);
+    fontOff();
 }
 
 void sendPrompt() {
     char prompt[128];
     if (inputLen == 0) {
-        if (!moreMode) return;  // nothing typed and no AI reply yet — ignore tap
+        if (historyCount == 0) return;  // no conversation yet — ignore
         strncpy(prompt, "Tell me more", 127);
     } else {
         strncpy(prompt, inputBuf, 127);
@@ -1575,46 +1648,17 @@ void drawCrosshair(int x, int y) {
 }
 #endif
 
-// Slide the SLUG logo off to the right over 1 second
-void slideOutSlug() {
-    const int    imgX0 = SCREEN_W - SLUGSMALL_W;   // 176
-    const int    imgY  = 20;
-    const unsigned long dur = 1000UL;
-    unsigned long t0 = millis();
-    int prevX = imgX0;
-    while (true) {
-        unsigned long elapsed = millis() - t0;
-        if (elapsed >= dur) break;
-        int x = imgX0 + (int)((long)SLUGSMALL_W * elapsed / dur);
-        if (x > prevX) {
-            // Erase only the newly-exposed left strip (no transparent holes to worry about)
-            tft.fillRect(prevX, imgY, x - prevX, SLUGSMALL_H, COL_BG);
-            if (x < SCREEN_W)
-                tft.pushImage(x, imgY, SLUGSMALL_W, SLUGSMALL_H, SLUG_SMALL);
-            prevX = x;
-        }
-        delay(16);
-    }
-    tft.fillRect(imgX0, imgY, SLUGSMALL_W, SLUGSMALL_H, COL_BG);
-}
-
 void showModelChoices() {
-    // Slug logo top-right (below the two help lines, clear of left-aligned model text)
-    tft.pushImage(SCREEN_W - SLUGSMALL_W, 20, SLUGSMALL_W, SLUGSMALL_H, SLUG_SMALL);
-
     uiFontOn();
     tft.setTextColor(TFT_WHITE, COL_BG);
-    int optY = 20 + TXT_H + 4;  // start below the two header lines
-    tft.setCursor(0, optY); tft.print("Hit 1 for Gemini 2.5 Flash"); optY += TXT_H;
-    tft.setCursor(0, optY); tft.print("    2 for Gemini 3 Flash");   optY += TXT_H;
-    tft.setCursor(0, optY); tft.print("    3 for Gemini 3.1 Pro");   optY += TXT_H;
-    tft.setCursor(0, optY); tft.print("    4 for Grok 4.1 Fast");    optY += TXT_H;
-    tft.setCursor(0, optY); tft.print("    5 for Groq OSS-120b");    optY += TXT_H;
-    if (!largeFont) {
-        tft.setCursor(0, optY); tft.print("    b for bigger font");  optY += TXT_H;
-    }
-    if (!invertDisplay) {
-        tft.setCursor(0, optY); tft.print("    i to invert colours"); optY += TXT_H;
+    int optY = 2 * TXT_H + 4;  // start below the two header lines
+    tft.drawString("1 Gemini 2.5 Flash", 2, optY); optY += TXT_H;
+    tft.drawString("2 Gemini 3 Flash",   2, optY); optY += TXT_H;
+    tft.drawString("3 Gemini 3.1 Pro",   2, optY); optY += TXT_H;
+    tft.drawString("4 Grok 4.1 Fast",    2, optY); optY += TXT_H;
+    tft.drawString("5 Groq OSS-120b",    2, optY); optY += TXT_H;
+    if (invertDisplay) {
+        tft.drawString("d Dark Theme", 2, optY); optY += TXT_H;
     }
     uiFontOff();
 }
@@ -1639,102 +1683,58 @@ void selectModel() {
         if (ch >= '1' && ch <= '3') {
             int i = ch - '1';
             halClickSound();
-            slideOutSlug();
             strncpy(GEMINI_MODEL, modelIds[i], 47); GEMINI_MODEL[47] = '\0';
             geminiUseGlobal = modelGlobal[i];
             useGrok = false; useGroq = false;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
             tft.fillRect(0, 0, SCREEN_W, clearH, bg);
-            if (largeFont) {
-                fontOn();
-                tft.setTextColor(TFT_GREEN, bg);
-                tft.drawString("SLUG AI chatbot", 0, 0);
-                tft.drawString(GEMINI_MODEL, 0, LINE_H_LARGE);
-                tft.setTextColor(TFT_DARKGREY, bg);
-                tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
-                fontOff();
-            } else {
-                uiFontOn();
-                tft.setTextColor(TFT_GREEN, bg);
-                tft.setCursor(0,        0); tft.print("SLUG AI Chatbot v0.2");
-                tft.setCursor(0,   TXT_H); tft.print("Model: "); tft.print(GEMINI_MODEL);
-                tft.setTextColor(TFT_DARKGREY, bg);
-                tft.setCursor(0, 2*TXT_H); tft.print("Ready.");
-                uiFontOff();
-            }
+            uiFontOn();
+            tft.setTextColor(TFT_GREEN, bg);
+            tft.drawString("Cheap AI Chat Keyboard", 2, 0);
+            tft.drawString(GEMINI_MODEL, 2, LINE_H_LARGE);
+            tft.setTextColor(TFT_DARKGREY, bg);
+            tft.drawString("Ready.", 2, 2 * LINE_H_LARGE);
+            uiFontOff();
             return;
         }
         if (ch == '4') {
             halClickSound();
-            slideOutSlug();
             useGrok = true; useGroq = false;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
             tft.fillRect(0, 0, SCREEN_W, clearH, bg);
-            if (largeFont) {
-                fontOn();
-                tft.setTextColor(TFT_GREEN, bg);
-                tft.drawString("SLUG AI Chatbot", 0, 0);
-                tft.drawString("Grok 4.1 Fast", 0, LINE_H_LARGE);
-                tft.setTextColor(TFT_DARKGREY, bg);
-                tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
-                fontOff();
-            } else {
-                uiFontOn();
-                tft.setTextColor(TFT_GREEN, bg);
-                tft.setCursor(0,        0); tft.print("SLUG AI Chatbot");
-                tft.setCursor(0,   TXT_H); tft.print("Model: Grok 4.1 Fast");
-                tft.setTextColor(TFT_DARKGREY, bg);
-                tft.setCursor(0, 2*TXT_H); tft.print("Ready.");
-                uiFontOff();
-            }
+            uiFontOn();
+            tft.setTextColor(TFT_GREEN, bg);
+            tft.drawString("Cheap AI Chat Keyboard", 2, 0);
+            tft.drawString("Grok 4.1 Fast", 2, LINE_H_LARGE);
+            tft.setTextColor(TFT_DARKGREY, bg);
+            tft.drawString("Ready.", 2, 2 * LINE_H_LARGE);
+            uiFontOff();
             return;
         }
         if (ch == '5') {
             halClickSound();
-            slideOutSlug();
             useGroq = true; useGrok = false;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
             tft.fillRect(0, 0, SCREEN_W, clearH, bg);
-            if (largeFont) {
-                fontOn();
-                tft.setTextColor(TFT_GREEN, bg);
-                tft.drawString("SLUG AI chatbot", 0, 0);
-                tft.drawString("Groq GPT-OSS-120b", 0, LINE_H_LARGE);
-                tft.setTextColor(TFT_DARKGREY, bg);
-                tft.drawString("Ready.", 0, 2 * LINE_H_LARGE);
-                fontOff();
-            } else {
-                uiFontOn();
-                tft.setTextColor(TFT_GREEN, bg);
-                tft.setCursor(0,        0); tft.print("SLUG AI chatbot");
-                tft.setCursor(0,   TXT_H); tft.print("Model: Groq GPT-OSS-120b");
-                tft.setTextColor(TFT_DARKGREY, bg);
-                tft.setCursor(0, 2*TXT_H); tft.print("Ready.");
-                uiFontOff();
-            }
+            uiFontOn();
+            tft.setTextColor(TFT_GREEN, bg);
+            tft.drawString("Cheap AI Chat Keyboard", 2, 0);
+            tft.drawString("Groq GPT-OSS-120b", 2, LINE_H_LARGE);
+            tft.setTextColor(TFT_DARKGREY, bg);
+            tft.drawString("Ready.", 2, 2 * LINE_H_LARGE);
+            uiFontOff();
             return;
         }
-        if (ch == 'b' || ch == 'B') {
-            largeFont = !largeFont;
-            int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
-            tft.fillRect(0, 0, SCREEN_W, clearH, COL_BG);
-            uiFontOn(); tft.setTextColor(TFT_DARKGREY, COL_BG);
-            tft.setCursor(0,      0); tft.print("SLUG AI chatbot");
-            tft.setCursor(0, TXT_H); tft.print("Select AI model:");
-            uiFontOff();
-            showModelChoices();
-            continue;
-        }
-        if (ch == 'i' || ch == 'I') {
+        if (ch == 'd' || ch == 'D') {
             invertDisplay = !invertDisplay;
-            int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
-            tft.fillRect(0, 0, SCREEN_W, clearH, COL_BG);
-            uiFontOn(); tft.setTextColor(TFT_DARKGREY, COL_BG);
-            tft.setCursor(0,      0); tft.print("SLUG AI chatbot");
-            tft.setCursor(0, TXT_H); tft.print("Select AI model:");
+            tft.fillScreen(COL_BG);
+            drawInputBar();
+            uiFontOn(); tft.setTextColor(TFT_WHITE, COL_BG);
+            tft.drawString("Cheap AI Chat Keyboard", 2, 0);
+            tft.drawString("Select AI model:",       2, TXT_H + 4);
             uiFontOff();
             showModelChoices();
             continue;
@@ -1744,8 +1744,8 @@ void selectModel() {
             calibrateTouch();
             tft.fillScreen(COL_BG);
             uiFontOn(); tft.setTextColor(TFT_DARKGREY, COL_BG);
-            tft.setCursor(0,      0); tft.print("SLUG AI chatbot");
-            tft.setCursor(0, TXT_H); tft.print("Select AI model:");
+            tft.drawString("Cheap AI Chat Keyboard", 2, 0);
+            tft.drawString("Select AI model:",       2, TXT_H);
             uiFontOff();
             drawKeyboard();
             drawInputBar(); showModelChoices();
@@ -1801,10 +1801,9 @@ void setup() {
     halInit();
     halLoadTouchCal(); // load saved touch calibration from NVS (or keep defaults)
 
-    // Boot splash at bottom; white area above it; "Connecting..." is the only text shown
+    // Boot splash — plain background while connecting
     unsigned long splashStart = millis();
-    tft.fillRect(0, 0, SCREEN_W, SCREEN_H - SLUG_H, TFT_WHITE);
-    tft.pushImage(0, SCREEN_H - SLUG_H, SLUG_W, SLUG_H, SLUG_SPLASH);
+    tft.fillScreen(TFT_WHITE);
     bool wifiOk = connectWiFi(wifiSsid[0], wifiPass[0], true);
     // Splash visible for at least 3 seconds
     long splashRemain = 3000L - (long)(millis() - splashStart);
@@ -1815,6 +1814,8 @@ void setup() {
         selectAP();  // scan → pick AP → enter password → connect; returns only on success
     }
 
+    tft.fillScreen(COL_BG);  // clear AP/splash UI before drawing model menu
+
 #ifndef TARGET_C3
     drawKeyboard();
 #endif
@@ -1822,8 +1823,8 @@ void setup() {
 
     uiFontOn();
     tft.setTextColor(TFT_WHITE, COL_BG);
-    tft.setCursor(0,          0); tft.print("SLUG AI chatbot");
-    tft.setCursor(0, TXT_H + 4); tft.print("Select AI model:");
+    tft.drawString("Cheap AI Chat Keyboard", 2, 0);
+    tft.drawString("Select AI model:",       2, TXT_H + 4);
     uiFontOff();
 
     selectModel();  // draws choices at y=30+ and waits for 1/2/3
@@ -1858,19 +1859,29 @@ void loop() {
     if (halPollInput(&ev)) {
         switch (ev.type) {
             case INPUT_SCROLL_UP: {
-                int lineH     = largeFont ? LINE_H_LARGE : LINE_H_SMALL;
+                int lineH     = LINE_H_LARGE;
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
-                scrollOffset  = max(0, scrollOffset - 3);
+#ifdef TARGET_C3
+                int visSlots  = maxVis - 1;  // last slot is input line
+#else
+                int visSlots  = maxVis;
+#endif
+                scrollOffset  = max(0, scrollOffset - visSlots / 2);
                 drawHistory();
                 break;
             }
             case INPUT_SCROLL_DOWN: {
-                int lineH     = largeFont ? LINE_H_LARGE : LINE_H_SMALL;
+                int lineH     = LINE_H_LARGE;
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
-                int maxScroll = max(0, lineCount - maxVis);
-                scrollOffset  = min(scrollOffset + 3, maxScroll);
+#ifdef TARGET_C3
+                int visSlots  = maxVis - 1;  // last slot is input line
+#else
+                int visSlots  = maxVis;
+#endif
+                int maxScroll = max(0, lineCount - visSlots);
+                scrollOffset  = min(scrollOffset + visSlots / 2, maxScroll);
                 drawHistory();
                 break;
             }
@@ -1905,7 +1916,7 @@ do_new_conv:
                     sendPrompt();
                     break;
                 }
-                if (inputLen == 0 && !moreMode) break;
+                if (inputLen == 0 && historyCount == 0) break;
                 sendPrompt();
                 break;
             case INPUT_MORE:
