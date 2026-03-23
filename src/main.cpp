@@ -171,7 +171,7 @@ void clearWifiPass(const char* ssid) {
 // --- UI text metrics: must match uiFontOn() ---
 #ifdef TARGET_C3
 #define TXT_W   8   // DejaVuSansBold12px average char width (proportional)
-#define TXT_H  14   // DejaVuSansBold12px line height (matches LINE_H_LARGE)
+#define TXT_H  15   // DejaVuSansBold12px line height (matches LINE_H_LARGE)
 #else
 #define TXT_W  6    // GLCD size-1: 6px char width
 #define TXT_H  8    // GLCD size-1: 8px char height
@@ -226,7 +226,7 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define KEY_INSET         1     // inset drawn box by this many px each side (~10% smaller)
 
 // --- Layout metrics ---
-#define LINE_H_LARGE     14     // DejaVuSansBold12px line height (yAdvance=13) + 1px gap
+#define LINE_H_LARGE     15     // DejaVuSansBold12px yAdvance=15 (matches VLW font header)
 #define LINE_H_SMALL     12     // DejaVuSansBold10px line height (yAdvance=13) - 1px
 #define SPLASH_H         45     // height of boot splash area to clear after connect (3 × LINE_H_LARGE)
 
@@ -612,24 +612,27 @@ void drawHistory() {
     // Falls back to direct TFT drawing if heap is too fragmented.
     TFT_eSprite spr(&tft);
     spr.setColorDepth(16);
+
+    // Pre-fill background before any sprite push.
+    tft.fillRect(0, 0, SCREEN_W, histH, bg);
+
+    // Slot 0: model heading — lineH+4 tall to avoid clipping descenders (g, q, y).
+    // Drawn in its own create/delete pass so no two sprites are alive simultaneously.
+    if (spr.createSprite(SCREEN_W, lineH + 4)) {
+        spr.loadFont(DejaVuSansBold12pxData);
+        const char* modelLabel = useGrok ? "Grok 4.1 Fast" :
+                                 useGroq ? "Groq OSS-120b" : GEMINI_MODEL;
+        spr.fillSprite(bg);
+        spr.setTextColor(invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
+        spr.drawString(modelLabel, 2, 0);
+        spr.unloadFont();
+        spr.pushSprite(0, 0);
+        spr.deleteSprite();
+    }
+
     if (spr.createSprite(SCREEN_W, lineH)) {
         spr.loadFont(DejaVuSansBold12pxData);
         spr.setTextWrap(false);
-
-        // Pre-fill background — on C3's polled SPI the very first pushSprite after
-        // a large prior transfer can land on a stale window; fillRect here ensures
-        // the correct bg is visible even if slot 0's push is delayed or reordered.
-        tft.fillRect(0, 0, SCREEN_W, histH, bg);
-
-        // Slot 0: model heading
-        {
-            const char* modelLabel = useGrok ? "Grok 4.1 Fast" :
-                                     useGroq ? "Groq OSS-120b" : GEMINI_MODEL;
-            spr.fillSprite(bg);
-            spr.setTextColor(invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
-            spr.drawString(modelLabel, 2, 0);
-            spr.pushSprite(0, 0);
-        }
 
         for (int i = 0; i < histSlots; i++) {
             spr.fillSprite(bg);
@@ -810,6 +813,36 @@ void enterPassword(const char* ssidPrompt, char* out) {
     kbVisible   = true;
 #endif
 
+#ifdef TARGET_C3
+    {
+        // Use sprite rendering for all rows — fillRect is unreliable on C3 for large areas
+        // (per-glyph setWindow/pushBlock SPI glitches leave stale pixels from the AP scan).
+        // Reuse one line-height sprite: draw header lines, then fill blank rows to the bottom.
+        int lineH = LINE_H_LARGE;
+        int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;  // y of input bar (matches drawInputBar)
+        TFT_eSprite spr(&tft);
+        spr.setColorDepth(16);
+        if (spr.createSprite(SCREEN_W, lineH)) {
+            spr.loadFont(DejaVuSansBold12pxData);
+            // Line 0: "Password for:"
+            spr.fillSprite(COL_BG);
+            spr.setTextColor(TFT_YELLOW, COL_BG);
+            spr.drawString("Password for:", 2, 0);
+            spr.pushSprite(0, 0);
+            // Line 1: SSID
+            spr.fillSprite(COL_BG);
+            spr.setTextColor(TFT_WHITE, COL_BG);
+            spr.drawString(ssidPrompt, 2, 0);
+            spr.pushSprite(0, lineH);
+            spr.unloadFont();
+            // Blank rows from line 2 down to just above the input bar
+            spr.fillSprite(COL_BG);
+            for (int y = 2 * lineH; y < inputY; y += lineH)
+                spr.pushSprite(0, y);
+            spr.deleteSprite();
+        }
+    }
+#else
     tft.fillRect(0, 0, SCREEN_W, SCREEN_H, COL_BG);
     fontOff();
     uiFontOn();
@@ -818,10 +851,9 @@ void enterPassword(const char* ssidPrompt, char* out) {
     tft.setTextColor(TFT_WHITE, COL_BG);
     tft.drawString(ssidPrompt, 2, TXT_H);
     uiFontOff();
-    drawInputBar();
-#ifndef TARGET_C3
     drawKeyboard();
 #endif
+    drawInputBar();
 
     while (true) {
         InputEvent ev;
@@ -1066,19 +1098,41 @@ static const char* WAIT_MSGS[] = {
 static const int NUM_WAIT_MSGS = sizeof(WAIT_MSGS) / sizeof(WAIT_MSGS[0]);
 int waitMsgIdx = 0;  // persistent — keeps rotating across calls
 
-void showWaiting(const char* msg) {
+// Render a status message into the input-line slot using a sprite so that VLW
+// font gdY offsets (which can be negative) are clipped to the sprite bounds and
+// never bleed pixels into the chat line above.
+static void showStatusLine(const char* msg, uint16_t col) {
 #ifdef TARGET_C3
-    {
-        int lineH  = LINE_H_LARGE;
-        int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;
-        uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-        tft.fillRect(0, inputY, SCREEN_W, SCREEN_H - inputY, bg);  // fill to screen bottom — clears glyph descenders
+    int lineH  = LINE_H_LARGE;
+    int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;
+    uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+    TFT_eSprite spr(&tft);
+    spr.setColorDepth(16);
+    if (spr.createSprite(SCREEN_W, lineH)) {
+        spr.loadFont(DejaVuSansBold12pxData);
+        spr.fillSprite(bg);
+        spr.setTextColor(col, bg);
+        spr.drawString(msg, 2, 0);
+        spr.unloadFont();
+        spr.pushSprite(0, inputY);
+        spr.deleteSprite();
+    } else {
+        // Fallback: direct draw — fill full slot height so descenders don't persist
+        tft.fillRect(0, inputY, SCREEN_W, SCREEN_H - inputY, bg);
         fontOn();
-        tft.setTextColor(TFT_DARKGREY, bg);
+        tft.setTextColor(col, bg);
         tft.drawString(msg, 2, inputY);
         fontOff();
-        return;
     }
+    // Fill the 2px remainder below the sprite (screen height not divisible by lineH)
+    tft.fillRect(0, inputY + lineH, SCREEN_W, SCREEN_H - inputY - lineH, bg);
+#endif
+}
+
+void showWaiting(const char* msg) {
+#ifdef TARGET_C3
+    showStatusLine(msg, TFT_DARKGREY);
+    return;
 #endif
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
@@ -1236,6 +1290,20 @@ String callGemini(const char* prompt) {
     // avoiding the extractBody() copy that would double peak heap usage.
     int hdrEnd   = fullResp.indexOf("\r\n\r\n");
     int bodyOff  = (hdrEnd >= 0) ? hdrEnd + 4 : 0;
+
+    // Detect truncated response via Content-Length; return ERR to trigger caller's retry.
+    if (hdrEnd > 0) {
+        int clPos = fullResp.indexOf("Content-Length: ");
+        if (clPos > 0 && clPos < hdrEnd) {
+            int contentLen = atoi(fullResp.c_str() + clPos + 16);
+            int bodyGot    = (int)fullResp.length() - bodyOff;
+            if (bodyGot < contentLen) {
+                Serial.printf("[Gemini] truncated: %d of %d body bytes\n", bodyGot, contentLen);
+                return "ERR: truncated response";
+            }
+        }
+    }
+
     int jsonStart = fullResp.indexOf('{', bodyOff);
     if (jsonStart < 0) {
         char buf[40]; snprintf(buf, sizeof(buf), "ERR: HTTP %d, no JSON", httpStatus);
@@ -1271,10 +1339,16 @@ String callGemini(const char* prompt) {
         const char* start = strchr(marker + 6, '"') + 1;  // skip past opening quote
         String result;
         const char* p = start;
+        bool closed = false;
         while (*p) {
             if (*p == '\\' && *(p+1)) { result += *p++; result += *p++; continue; }
-            if (*p == '"') break;
+            if (*p == '"') { closed = true; break; }
             result += *p++;
+        }
+        if (!closed) {
+            // SSL died mid-string — text field was never closed; retry rather than show garbage
+            Serial.printf("[Gemini] manual extract truncated (%d chars, no closing quote)\n", result.length());
+            return "ERR: truncated response";
         }
         result.replace("\\n", "\n");
         result.replace("\\\"", "\"");
@@ -1574,17 +1648,8 @@ String callGroq(const char* prompt) {
 // --- Send flow ---
 void showThinking() {
 #ifdef TARGET_C3
-    {
-        int lineH  = LINE_H_LARGE;
-        int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;
-        uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-        tft.fillRect(0, inputY, SCREEN_W, SCREEN_H - inputY, bg);  // fill to screen bottom
-        fontOn();
-        tft.setTextColor(TFT_DARKGREY, bg);
-        tft.drawString("Thinking...", 2, inputY);
-        fontOff();
-        return;
-    }
+    showStatusLine("Thinking...", TFT_DARKGREY);
+    return;
 #endif
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
@@ -1651,8 +1716,9 @@ void drawCrosshair(int x, int y) {
 #endif
 
 void showModelChoices() {
+    uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
     uiFontOn();
-    tft.setTextColor(TFT_WHITE, COL_BG);
+    tft.setTextColor(TFT_WHITE, bg);
     int optY = 2 * TXT_H + 4;  // start below the two header lines
     tft.drawString("1 Gemini 2.5 Flash", 2, optY); optY += TXT_H;
     tft.drawString("2 Gemini 3 Flash",   2, optY); optY += TXT_H;
@@ -1660,7 +1726,7 @@ void showModelChoices() {
     tft.drawString("4 Grok 4.1 Fast",    2, optY); optY += TXT_H;
     tft.drawString("5 Groq OSS-120b",    2, optY); optY += TXT_H;
     if (invertDisplay) {
-        tft.drawString("d Dark Theme", 2, optY); optY += TXT_H;
+        tft.drawString("D Dark Theme", 2, optY); optY += TXT_H;
     }
     uiFontOff();
 }
@@ -1732,9 +1798,10 @@ void selectModel() {
         }
         if (ch == 'd' || ch == 'D') {
             invertDisplay = !invertDisplay;
-            tft.fillScreen(COL_BG);
+            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+            tft.fillScreen(bg);
             drawInputBar();
-            uiFontOn(); tft.setTextColor(TFT_WHITE, COL_BG);
+            uiFontOn(); tft.setTextColor(TFT_WHITE, bg);
             tft.drawString("Cheap AI Chat Keyboard", 2, 0);
             tft.drawString("Select AI model:",       2, TXT_H + 4);
             uiFontOff();

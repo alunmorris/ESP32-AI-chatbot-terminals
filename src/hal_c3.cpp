@@ -275,6 +275,22 @@ class ScanCB : public NimBLEScanCallbacks {
 };
 static ScanCB gScanCB;  // single instance reused across NimBLE reinits
 
+// --- Address arithmetic ---
+// Keyboard increments its last address octet each session (resolvable private address behaviour).
+// Try bonded+1 on boot if direct connect fails, to avoid a full scan round-trip.
+static NimBLEAddress addrPlusOne(const NimBLEAddress& addr) {
+    std::string s = addr.toString();  // "xx:xx:xx:xx:xx:yy"
+    if (s.size() < 2) return addr;
+    // Parse last octet
+    std::string lastHex = s.substr(s.size() - 2);
+    unsigned long last = strtoul(lastHex.c_str(), nullptr, 16);
+    last = (last + 1) & 0xFF;
+    char buf[3];
+    snprintf(buf, sizeof(buf), "%02x", (unsigned)last);
+    std::string next = s.substr(0, s.size() - 2) + buf;
+    return NimBLEAddress(next.c_str(), addr.getType());
+}
+
 // Register scan callbacks on the current scan singleton (must be called after each NimBLE init)
 static void setupScan() {
     NimBLEScan* scan = NimBLEDevice::getScan();
@@ -294,30 +310,61 @@ void halInit() {
     NimBLEDevice::setSecurityAuth(true, false, false);  // bonding, Just Works
     // NimBLE 2.x: security callbacks live in NimBLEClientCallbacks (see ClientCB above)
 
-    // Try bonded address first
+    // Show boot status and attempt reconnect to known keyboard
+    const uint16_t BOOT_BG = 0x0841;
     bondedAddr = loadBondedAddress(hasBonded);
     Serial.printf("[C3 BLE] hasBonded=%d\n", hasBonded);
-    if (hasBonded) {
-        Serial.println("[C3 BLE] Trying bonded address...");
-        if (!doConnect(bondedAddr, 3)) hasBonded = false;  // 3s: fail fast if address rotated
-        Serial.printf("[C3 BLE] bonded connect result: connected=%d\n", connected);
-    }
 
-    if (!connected) {
-        // Display waiting message
-        Serial.println("[C3 BLE] Drawing waiting text on display...");
+    // Line 1 always: "Keyboard connection..."
+    tft.loadFont(DejaVuSansBold12pxData);
+    tft.setTextColor(0xFFFF, BOOT_BG);
+    tft.drawString("Keyboard connection...", 10, 10);
+    tft.unloadFont();
+
+    if (hasBonded) {
+        // Phase 1: scan for known keyboard — user taps a key to wake it and trigger advertising
         tft.loadFont(DejaVuSansBold12pxData);
-        tft.setTextColor(0xFFFF, 0x0841);
-        tft.drawString("Waiting for BLE keyboard...", 10, 10);
+        tft.setTextColor(0xFFFF, BOOT_BG);
+        tft.drawString("Tap a key", 10, 26);
         tft.unloadFont();
-        Serial.println("[C3 BLE] Waiting text drawn. Starting BLE scan...");
 
         setupScan();
         NimBLEScan* scan = NimBLEDevice::getScan();
+        // 3 × 10s = 30s window; ScanCB sets wantConnect when it finds the keyboard
+        for (int w = 0; w < 3 && !connected; w++) {
+            wantConnect = false;
+            Serial.printf("[C3 BLE] reconnect scan window %d\n", w);
+            scan->start(10, false);
+            for (int i = 0; i < 100 && !connected; i++) {
+                if (wantConnect) {
+                    wantConnect = false;
+                    NimBLEAddress found = bondedAddr;
+                    if (doConnect(found, 15)) {
+                        if (found != bondedAddr) { bondedAddr = found; saveBondedAddress(bondedAddr); }
+                    }
+                }
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+        }
+        scan->stop();
+        Serial.printf("[C3 BLE] reconnect scan done: connected=%d\n", connected);
+    }
+
+    if (!connected) {
+        // Phase 2: pairing mode — any HID keyboard can connect
+        tft.fillRect(0, 26, tft.width(), 30, BOOT_BG);  // clear "Tap a key" if shown
+        tft.loadFont(DejaVuSansBold12pxData);
+        tft.setTextColor(0xFFFF, BOOT_BG);
+        tft.drawString("Set keyboard to pairing...", 10, 60);
+        tft.unloadFont();
+
+        setupScan();
+        NimBLEScan* scan = NimBLEDevice::getScan();
+        String dots;
         while (!connected) {
             wantConnect = false;
             Serial.println("[BLE scan] starting 10s window...");
-            scan->start(10, false);  // NimBLE 2.x: non-blocking, wait manually
+            scan->start(10, false);
             for (int i = 0; i < 100 && !connected; i++) {
                 if (wantConnect) {
                     wantConnect = false;
@@ -326,8 +373,16 @@ void halInit() {
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
             Serial.printf("[BLE scan] window done, connected=%d\n", connected);
+            if (!connected) {
+                dots += '.';
+                tft.loadFont(DejaVuSansBold12pxData);
+                tft.setTextColor(0xFFFF, BOOT_BG);
+                tft.fillRect(10, 58, tft.width() - 10, 16, BOOT_BG);
+                tft.drawString(dots.c_str(), 10, 58);
+                tft.unloadFont();
+            }
         }
-        tft.fillRect(0, 0, tft.width(), 50, 0x0841);  // clear waiting message
+        tft.fillRect(0, 0, tft.width(), 70, BOOT_BG);  // clear boot screen
     }
 
     // Start reconnect background task
