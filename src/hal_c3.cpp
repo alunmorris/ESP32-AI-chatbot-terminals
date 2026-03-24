@@ -1,5 +1,7 @@
 // hal_c3.cpp — ESP32-C3 Supermini: NimBLE BLE HID host keyboard input
 // No LED, no speaker, no touch.
+// 240326 Boot screen: sprite-based rendering (bootRow lambda) to fix C3 SPI glitches (white rect, garbled text)
+// 240326 Font selection: use FONT_LOAD/FONT_UNLOAD macros from font.h; support FONT_BUILTIN_16PX
 #ifdef TARGET_C3
 
 #include "hal.h"
@@ -13,7 +15,7 @@
 
 // External TFT for status display during init
 extern TFT_eSPI tft;
-#include "fonts/DejaVuSansBold12px.h"
+#include "font.h"
 
 // --- BLE UUIDs ---
 static const NimBLEUUID HID_SVC_UUID("1812");
@@ -310,23 +312,39 @@ void halInit() {
     NimBLEDevice::setSecurityAuth(true, false, false);  // bonding, Just Works
     // NimBLE 2.x: security callbacks live in NimBLEClientCallbacks (see ClientCB above)
 
-    // Show boot status and attempt reconnect to known keyboard
-    const uint16_t BOOT_BG = 0x0841;
+    // Show boot status and attempt reconnect to known keyboard.
+    // All text uses sprite rendering to avoid C3 per-glyph SPI setWindow glitches
+    // (which cause white rectangles and garbled pixels with direct drawString).
+    const uint16_t BOOT_BG = 0xC618;  // light grey — matches COL_INVERT_BG in main.cpp
+    const uint16_t BOOT_FG = 0x0000;  // black text on light background
+    const int lineH = FONT_LINE_H;  // rows are lineH pixels tall, same unit as chat display
+    tft.fillScreen(BOOT_BG);  // fill entire screen with light background before drawing rows
+
+    // Helper: push one boot-screen row as a sprite.
+    // Row 0 = top of screen, row 1 = lineH, row 2 = 2*lineH, etc.
+    auto bootRow = [&](int row, const char* text, uint16_t col = 0x0000) {
+        TFT_eSprite spr(&tft);
+        spr.setColorDepth(16);
+        if (spr.createSprite(tft.width(), lineH)) {
+            FONT_LOAD(spr);
+            spr.fillSprite(BOOT_BG);
+            spr.setTextColor(col, BOOT_BG);
+            spr.drawString(text, 6, 0);
+            FONT_UNLOAD(spr);
+            spr.pushSprite(0, row * lineH);
+            spr.deleteSprite();
+        }
+    };
+
     bondedAddr = loadBondedAddress(hasBonded);
     Serial.printf("[C3 BLE] hasBonded=%d\n", hasBonded);
 
-    // Line 1 always: "Keyboard connection..."
-    tft.loadFont(DejaVuSansBold12pxData);
-    tft.setTextColor(0xFFFF, BOOT_BG);
-    tft.drawString("Keyboard connection...", 10, 10);
-    tft.unloadFont();
+    // Row 0 always: "Keyboard connection..."
+    bootRow(0, "Keyboard connection...");
 
     if (hasBonded) {
         // Phase 1: scan for known keyboard — user taps a key to wake it and trigger advertising
-        tft.loadFont(DejaVuSansBold12pxData);
-        tft.setTextColor(0xFFFF, BOOT_BG);
-        tft.drawString("Tap a key", 10, 26);
-        tft.unloadFont();
+        bootRow(1, "Tap a key");
 
         setupScan();
         NimBLEScan* scan = NimBLEDevice::getScan();
@@ -351,12 +369,9 @@ void halInit() {
     }
 
     if (!connected) {
-        // Phase 2: pairing mode — any HID keyboard can connect
-        tft.fillRect(0, 26, tft.width(), 30, BOOT_BG);  // clear "Tap a key" if shown
-        tft.loadFont(DejaVuSansBold12pxData);
-        tft.setTextColor(0xFFFF, BOOT_BG);
-        tft.drawString("Set keyboard to pairing...", 10, 60);
-        tft.unloadFont();
+        // Phase 2: pairing mode — any HID keyboard can connect.
+        // Clear row 1 (was "Tap a key") and show pairing prompt.
+        bootRow(1, "Set keyboard to pairing...");
 
         setupScan();
         NimBLEScan* scan = NimBLEDevice::getScan();
@@ -375,15 +390,13 @@ void halInit() {
             Serial.printf("[BLE scan] window done, connected=%d\n", connected);
             if (!connected) {
                 dots += '.';
-                tft.loadFont(DejaVuSansBold12pxData);
-                tft.setTextColor(0xFFFF, BOOT_BG);
-                tft.fillRect(10, 58, tft.width() - 10, 16, BOOT_BG);
-                tft.drawString(dots.c_str(), 10, 58);
-                tft.unloadFont();
+                bootRow(2, dots.c_str());
             }
         }
-        tft.fillRect(0, 0, tft.width(), 70, BOOT_BG);  // clear boot screen
     }
+
+    // Always clear the boot area before returning (covers all connection paths).
+    tft.fillRect(0, 0, tft.width(), 3 * lineH, BOOT_BG);
 
     // Start reconnect background task
     xTaskCreate(reconnectTask, "ble_recon", 4096, nullptr, 1, &reconnectTaskHandle);
