@@ -13,6 +13,8 @@ enum InputEventType {
     INPUT_SCROLL_DOWN,  // CYD28: swipe down;  C3: ↓ arrow key
     INPUT_NEW_CONV,     // CYD28: New button;  C3: Ctrl+N
     INPUT_MORE,         // CYD28: More button; C3: Ctrl+M
+    INPUT_CURSOR_LEFT,  // C3: ← arrow key
+    INPUT_CURSOR_RIGHT, // C3: → arrow key
 };
 
 struct InputEvent {

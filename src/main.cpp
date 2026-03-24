@@ -1,4 +1,11 @@
 // Cheap AI Chat Keyboard — ESP32-C3 + CYD28
+// 240326 Cursor movement: left/right arrows move insertion point; insert/delete at cursor
+// 240326 Gemini request: PrintBuffer flushes serializeJson in 1KB chunks (fixes TLS write failure)
+// 240326 Gemini request: serialize directly to socket via measureJson+PrintBuffer (no String body)
+// 240326 Gemini response: adaptive reserve cap based on largest free heap block after TLS
+// 240326 Gemini response: reserve fullResp after reqDoc freed to avoid three-way heap pressure
+// 240326 Cursor visible in input bar: 2px bar drawn at inputCursor position in all render paths
+// 240326 Light mode: all pages (model menu, AP scan, KB connect) use invertDisplay colours
 // 240326 Font switch: FONT_LOAD/FONT_UNLOAD macros from font.h; add FONT_BUILTIN_16PX option
 // 240326 Font switch: font.h #define FONT_18PX selects 18px/22px or 12px/15px font system-wide
 // 240326 enterPassword C3: sprite-per-row rendering to clear AP scan and fill blank rows
@@ -409,6 +416,7 @@ unsigned long lastWiFiCheckMs = 0;
 // --- Input buffer ---
 char inputBuf[INPUT_BUF_SIZE] = {0};
 int  inputLen      = 0;
+int  inputCursor   = 0;   // insertion point within inputBuf; 0=before first char
 bool moreMode      = false;  // true after AI reply → button shows "More"
 
 void drawInputBar() {
@@ -430,20 +438,24 @@ void drawInputBar() {
             int promptW = spr.textWidth("> ");
             spr.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
             int availW = SCREEN_W - promptW - 4;
-            int start = 0;
-            if (inputLen > 0) {
-                start = inputLen;
-                while (start > 0) {
-                    char tmp[INPUT_BUF_SIZE];
-                    strncpy(tmp, inputBuf + start - 1, inputLen - start + 1);
-                    tmp[inputLen - start + 1] = '\0';
-                    if (spr.textWidth(tmp) > availW) break;
-                    start--;
-                }
+            // Scroll so cursor is always visible
+            int start = inputCursor;
+            while (start > 0) {
+                char tmp[INPUT_BUF_SIZE];
+                int len = inputCursor - (start - 1);
+                strncpy(tmp, inputBuf + start - 1, len);
+                tmp[len] = '\0';
+                if (spr.textWidth(tmp) > availW - 2) break;
+                start--;
             }
             char dispBuf[INPUT_BUF_SIZE] = {0};
             strncpy(dispBuf, inputBuf + start, inputLen - start);
             spr.drawString(dispBuf, 2 + promptW, 0);
+            // Cursor at inputCursor position
+            char preCur[INPUT_BUF_SIZE] = {0};
+            strncpy(preCur, inputBuf + start, inputCursor - start);
+            int curX = 2 + promptW + spr.textWidth(preCur);
+            spr.fillRect(curX, 2, 2, lineH - 4, invertDisplay ? TFT_BLACK : TFT_WHITE);
             FONT_UNLOAD(spr);
             spr.pushSprite(0, inputY);
             spr.deleteSprite();
@@ -456,10 +468,11 @@ void drawInputBar() {
             int promptW = tft.textWidth("> ");
             tft.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
             int maxChars = (SCREEN_W - (int)promptW - 4) / TXT_W;
+            int start = (inputCursor > maxChars) ? inputCursor - maxChars : 0;
             char dispBuf[INPUT_BUF_SIZE] = {0};
-            int start = (inputLen > maxChars) ? inputLen - maxChars : 0;
             strncpy(dispBuf, inputBuf + start, inputLen - start);
             tft.drawString(dispBuf, 2 + promptW, inputY);
+            tft.fillRect(2 + promptW + (inputCursor - start) * TXT_W, inputY, 2, TXT_H, invertDisplay ? TFT_BLACK : TFT_WHITE);
             fontOff();
         }
         return;
@@ -481,12 +494,15 @@ void drawInputBar() {
     tft.setCursor(2, barY + (barH - TXT_H) / 2);
     tft.print("> ");
     tft.setTextColor(COL_IBAR_TEXT, COL_IBAR_BG);
+    int textStartX = tft.getCursorX();
 
-    int maxChars = (SCREEN_W - BTN_SEND_W - 14) / TXT_W;
+    int maxChars = (SCREEN_W - BTN_SEND_W - textStartX - 4) / TXT_W;
+    int start = (inputCursor > maxChars) ? inputCursor - maxChars : 0;
     char display[54] = {0};
-    int start = (inputLen > maxChars) ? inputLen - maxChars : 0;
     strncpy(display, inputBuf + start, maxChars);
     tft.print(display);
+    // Cursor at inputCursor position (fixed-width font)
+    tft.fillRect(textStartX + (inputCursor - start) * TXT_W, barY + (barH - TXT_H) / 2, 2, TXT_H, COL_IBAR_TEXT);
 
     // Button
     tft.fillRect(SCREEN_W - BTN_SEND_W, barY + BTN_INSET, BTN_SEND_W - BTN_INSET*2, barH - BTN_INSET*2, COL_BTN_BG);
@@ -514,11 +530,11 @@ struct Message {
     bool   isUser;
     bool   isError;
     bool   displayOnly;  // true = show in chat but never sent to AI
-    char   text[2048];
+    char   text[3072];
 };
 
 #ifdef TARGET_C3
-static const int  MAX_MESSAGES = 10;   // reduced from 20 to free heap for TLS+BLE coexistence
+static const int  MAX_MESSAGES = 6;    // 6×3KB=18KB static; leaves heap for TLS+BLE+response buffer
 #else
 static const int  MAX_MESSAGES = 20;
 #endif
@@ -668,20 +684,24 @@ void drawHistory() {
             int promptW = spr.textWidth("> ");
             spr.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
             int availW = SCREEN_W - promptW - 4;
-            int start = 0;
-            if (inputLen > 0) {
-                start = inputLen;
-                while (start > 0) {
-                    char tmp[INPUT_BUF_SIZE];
-                    strncpy(tmp, inputBuf + start - 1, inputLen - start + 1);
-                    tmp[inputLen - start + 1] = '\0';
-                    if (spr.textWidth(tmp) > availW) break;
-                    start--;
-                }
+            // Scroll so cursor is always visible
+            int start = inputCursor;
+            while (start > 0) {
+                char tmp[INPUT_BUF_SIZE];
+                int len = inputCursor - (start - 1);
+                strncpy(tmp, inputBuf + start - 1, len);
+                tmp[len] = '\0';
+                if (spr.textWidth(tmp) > availW - 2) break;
+                start--;
             }
             char dispBuf[INPUT_BUF_SIZE] = {0};
             strncpy(dispBuf, inputBuf + start, inputLen - start);
             spr.drawString(dispBuf, 2 + promptW, 0);
+            // Cursor at inputCursor position
+            char preCur[INPUT_BUF_SIZE] = {0};
+            strncpy(preCur, inputBuf + start, inputCursor - start);
+            int curX = 2 + promptW + spr.textWidth(preCur);
+            spr.fillRect(curX, 2, 2, lineH - 4, invertDisplay ? TFT_BLACK : TFT_WHITE);
             spr.pushSprite(0, (maxVis - 1) * lineH);  // last slot, after heading + histSlots chat lines
         }
 
@@ -741,14 +761,14 @@ void addMessage(bool isUser, bool isError, const char* text) {
     history[historyCount].isUser       = isUser;
     history[historyCount].isError      = isError;
     history[historyCount].displayOnly  = false;
-    strncpy(history[historyCount].text, text, 2047);
-    history[historyCount].text[2047] = '\0';
+    strncpy(history[historyCount].text, text, 3071);
+    history[historyCount].text[3071] = '\0';
     // Sanitise: pass supported UTF-8 codepoints through unchanged.
     // Strip C0 controls; normalise space-like and hyphen-like chars not in font;
     // drop zero-width/invisible chars; replace remaining unsupported sequences with '?'.
     {
         const char* s = history[historyCount].text;
-        char tmp[2060];
+        char tmp[3084];
         char* d   = tmp;
         char* end = tmp + sizeof(tmp) - 4;
         while (*s && d < end) {
@@ -797,8 +817,8 @@ void addMessage(bool isUser, bool isError, const char* text) {
             }
         }
         *d = '\0';
-        strncpy(history[historyCount].text, tmp, 2047);
-        history[historyCount].text[2047] = '\0';
+        strncpy(history[historyCount].text, tmp, 3071);
+        history[historyCount].text[3071] = '\0';
     }
     historyCount++;
     scrollOffset = 0;   // auto-scroll to bottom
@@ -812,6 +832,7 @@ void addMessage(bool isUser, bool isError, const char* text) {
 void enterPassword(const char* ssidPrompt, char* out) {
     inputBuf[0] = '\0';
     inputLen    = 0;
+    inputCursor = 0;
     moreMode    = false;
     shiftOn     = false;
     altOn       = false;
@@ -873,17 +894,28 @@ void enterPassword(const char* ssidPrompt, char* out) {
         switch (ev.type) {
             case INPUT_ENTER:
                 strncpy(out, inputBuf, 63); out[63] = '\0';
-                inputBuf[0] = '\0'; inputLen = 0;   // clear sensitive data
+                inputBuf[0] = '\0'; inputLen = 0; inputCursor = 0;   // clear sensitive data
                 return;
             case INPUT_CHAR:
                 if (inputLen < 63) {
-                    inputBuf[inputLen++] = ev.ch;
-                    inputBuf[inputLen]   = '\0';
+                    memmove(inputBuf + inputCursor + 1, inputBuf + inputCursor, inputLen - inputCursor + 1);
+                    inputBuf[inputCursor] = ev.ch;
+                    inputLen++; inputCursor++;
                     drawInputBar();
                 }
                 break;
             case INPUT_BACKSPACE:
-                if (inputLen > 0) { inputBuf[--inputLen] = '\0'; drawInputBar(); }
+                if (inputCursor > 0) {
+                    memmove(inputBuf + inputCursor - 1, inputBuf + inputCursor, inputLen - inputCursor + 1);
+                    inputLen--; inputCursor--;
+                    drawInputBar();
+                }
+                break;
+            case INPUT_CURSOR_LEFT:
+                if (inputCursor > 0) { inputCursor--; drawInputBar(); }
+                break;
+            case INPUT_CURSOR_RIGHT:
+                if (inputCursor < inputLen) { inputCursor++; drawInputBar(); }
                 break;
             default:
                 break;
@@ -1197,6 +1229,33 @@ static String extractBody(const String& resp) {
     return out;
 }
 
+// Buffers serializeJson output into 1 KB chunks before each TLS write.
+// Writing byte-by-byte (as serializeJson does via Print::write(uint8_t)) causes
+// thousands of individual mbedtls_ssl_write() calls which destabilise the TLS
+// state machine on ESP32-C3. Flushing in 1 KB blocks reduces that to ~20 calls.
+struct PrintBuffer : public Print {
+    WiFiClientSecure& _c;
+    uint8_t _buf[1024];
+    size_t  _len = 0;
+    PrintBuffer(WiFiClientSecure& c) : _c(c) {}
+    void flush() { if (_len) { _c.write(_buf, _len); _len = 0; } }
+    size_t write(uint8_t b) override {
+        _buf[_len++] = b;
+        if (_len == sizeof(_buf)) flush();
+        return 1;
+    }
+    size_t write(const uint8_t* data, size_t n) override {
+        size_t done = 0;
+        while (done < n) {
+            size_t take = min(n - done, sizeof(_buf) - _len);
+            memcpy(_buf + _len, data + done, take);
+            _len += take; done += take;
+            if (_len == sizeof(_buf)) flush();
+        }
+        return n;
+    }
+};
+
 // --- Gemini API call ---
 String callGemini(const char* prompt) {
     // Build URL path early (stack-only, no heap)
@@ -1213,17 +1272,16 @@ String callGemini(const char* prompt) {
 
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(API_TIMEOUT_MS / 1000);   // 45s TLS timeout (pro model needs longer)
+    client.setTimeout(API_TIMEOUT_MS / 1000);
 
-    showWaiting("Thinking...");  // re-assert just before blocking TLS handshake
+    showWaiting("Thinking...");
     if (!client.connect(GEMINI_HOST, HTTPS_PORT)) {
         return "ERR: connect failed (check WiFi/DNS)";
     }
 
-    // Build + send request body in an inner scope so reqDoc and body are freed
-    // immediately after sending — before the response is read. This prevents
-    // reqDoc (~4-8KB) and body (~1KB) from being alive simultaneously with
-    // fullResp, reducing peak heap by ~5-10KB.
+    // Build + send request. reqDoc copies history text (~15KB) and serializeJson
+    // needs AES record buffers (~16KB) — keep fullResp out of scope here to avoid
+    // three-way heap pressure (reqDoc + AES + fullResp reservation).
     {
         JsonDocument reqDoc;
         JsonObject sysInstr = reqDoc["system_instruction"].to<JsonObject>();
@@ -1248,21 +1306,43 @@ String callGemini(const char* prompt) {
         JsonArray tools = reqDoc["tools"].to<JsonArray>();
         tools.add<JsonObject>()["google_search"].to<JsonObject>();
 
-        String body;
-        serializeJson(reqDoc, body);
+        // measureJson → Content-Length header; PrintBuffer → chunked TLS writes.
+        int bodyLen = measureJson(reqDoc);
         client.printf(
             "POST %s HTTP/1.0\r\n"
             "Host: " GEMINI_HOST "\r\n"
             "Content-Type: application/json\r\n"
             "Content-Length: %d\r\n\r\n",
-            path, (int)body.length());
-        client.print(body);
-        // reqDoc and body freed here — scope ends
+            path, bodyLen);
+        { PrintBuffer pb(client); serializeJson(reqDoc, pb); pb.flush(); }
+        // reqDoc freed here — scope ends
     }
 
-    // Read full response using read(buf,n) — avoids available() which can prematurely
-    // process TLS close_notify and discard buffered bytes.
+    // Abort immediately if the write failed — avoids spinning in the read loop for 15s
+    // on a dead socket, which starves BLE and can trigger a watchdog reset.
+    if (!client.connected()) {
+        client.stop();
+        Serial.println("[Gemini] write failed");
+        return "ERR: write failed";
+    }
+
+    // Reserve response buffer AFTER reqDoc is freed — avoids three-way heap pressure
+    // (TLS + reqDoc + fullResp). String::concat into a pre-reserved buffer never reallocs,
+    // preventing the null-pointer write (Store fault) seen under heap pressure.
     String fullResp;
+    // TLS holds ~52KB heap, leaving ~20KB free. Use largest available contiguous block
+    // (capped at 8KB — enough for a 120-word Gemini reply including headers).
+    // String::concat into a pre-reserved buffer never reallocs → no null-pointer crash.
+    size_t avail = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    const size_t RESP_CAP = (avail > 9216) ? 8192 : (avail > 5120 ? avail - 1024 : 0);
+    if (RESP_CAP == 0 || !fullResp.reserve(RESP_CAP)) {
+        Serial.printf("[Gemini] low heap (%d / largest=%d), cannot reserve response buffer\n",
+                      ESP.getFreeHeap(), (int)avail);
+        client.stop();
+        return "ERR: low memory";
+    }
+    Serial.printf("[Gemini] resp cap=%d (free=%d)\n", (int)RESP_CAP, ESP.getFreeHeap());
+
     uint8_t rbuf[256];
     unsigned long deadline   = millis() + API_TIMEOUT_MS;
     unsigned long nextMsgMs  = millis() + API_WAIT_FIRST_MS;
@@ -1273,13 +1353,14 @@ String callGemini(const char* prompt) {
         if (n > 0) {
             lastData = millis();
             receivedAny = true;
-            fullResp.concat((const char*)rbuf, n);  // append whole chunk — fewer reallocations
+            if (fullResp.length() < RESP_CAP)
+                fullResp.concat((const char*)rbuf, n);
             continue;  // read more without delay
         }
         // n <= 0: no data right now. Never break on this alone.
-        if (receivedAny && !client.connected()) break;  // server closed connection
-        if (receivedAny && millis() - lastData > 1000) break;  // 1s idle = response complete
-        if (!receivedAny && millis() - lastData > 15000) break;  // 15s no first byte = give up
+        if (!client.connected()) break;                          // connection closed (any state)
+        if (receivedAny && millis() - lastData > 1000) break;   // 1s idle = response complete
+        if (!receivedAny && millis() - lastData > 15000) break; // 15s no first byte = give up
         if (WiFi.status() != WL_CONNECTED) break;
         if (millis() >= nextMsgMs) {
             showWaiting(WAIT_MSGS[waitMsgIdx]);
@@ -1304,12 +1385,10 @@ String callGemini(const char* prompt) {
         sscanf(fullResp.substring(statusPos, eol).c_str(), "HTTP/%*s %d", &httpStatus);
     }
 
-    // HTTP/1.0 is never chunked — skip headers and find JSON start directly in fullResp,
-    // avoiding the extractBody() copy that would double peak heap usage.
-    int hdrEnd   = fullResp.indexOf("\r\n\r\n");
-    int bodyOff  = (hdrEnd >= 0) ? hdrEnd + 4 : 0;
+    int hdrEnd = fullResp.indexOf("\r\n\r\n");
+    int bodyOff = (hdrEnd >= 0) ? hdrEnd + 4 : 0;
 
-    // Detect truncated response via Content-Length; return ERR to trigger caller's retry.
+    // Detect truncated response via Content-Length.
     if (hdrEnd > 0) {
         int clPos = fullResp.indexOf("Content-Length: ");
         if (clPos > 0 && clPos < hdrEnd) {
@@ -1322,7 +1401,14 @@ String callGemini(const char* prompt) {
         }
     }
 
-    int jsonStart = fullResp.indexOf('{', bodyOff);
+    // Decode chunked transfer encoding. The server may respond HTTP/1.1 chunked even
+    // when we request HTTP/1.0 — chunk-size lines embedded in the JSON cause ArduinoJson
+    // to return InvalidInput. extractBody() removes them. Free fullResp immediately after
+    // to avoid holding both the raw and decoded buffers simultaneously.
+    String body = extractBody(fullResp);
+    fullResp = String();  // release raw response buffer (~10KB) before JSON parsing
+
+    int jsonStart = body.indexOf('{');
     if (jsonStart < 0) {
         char buf[40]; snprintf(buf, sizeof(buf), "ERR: HTTP %d, no JSON", httpStatus);
         return String(buf);
@@ -1333,7 +1419,7 @@ String callGemini(const char* prompt) {
     filter["candidates"][0]["content"]["parts"][0]["text"] = true;
     filter["error"]["message"] = true;
     JsonDocument respDoc;
-    DeserializationError derr = deserializeJson(respDoc, fullResp.c_str() + jsonStart,
+    DeserializationError derr = deserializeJson(respDoc, body.c_str() + jsonStart,
                                                 DeserializationOption::Filter(filter));
     if (derr == DeserializationError::Ok || derr == DeserializationError::IncompleteInput) {
         // IncompleteInput is normal: Gemini appends large metadata after the text field;
@@ -1350,7 +1436,7 @@ String callGemini(const char* prompt) {
 
     // JSON parse failed or text field not captured — manually extract "text": "..."
     Serial.printf("[Gemini] JSON err=%s, trying manual extract\n", derr.c_str());
-    const char* raw = fullResp.c_str() + jsonStart;
+    const char* raw = body.c_str() + jsonStart;
     const char* marker = strstr(raw, "\"text\": \"");
     if (!marker) marker = strstr(raw, "\"text\":\"");
     if (marker) {
@@ -1377,7 +1463,7 @@ String callGemini(const char* prompt) {
         }
     }
 
-    Serial.println("Bad JSON (HTTP " + String(httpStatus) + "): " + fullResp.substring(jsonStart, jsonStart + 300) + " err=" + derr.c_str());
+    Serial.println("Bad JSON (HTTP " + String(httpStatus) + "): " + body.substring(jsonStart, jsonStart + 300) + " err=" + derr.c_str());
     char buf[40]; snprintf(buf, sizeof(buf), "ERR: HTTP %d, bad JSON", httpStatus);
     return String(buf);
 }
@@ -1403,7 +1489,7 @@ String callGrok(const char* prompt) {
         JsonDocument reqDoc;
         reqDoc["model"]        = GROK_MODEL;
         reqDoc["stream"]       = false;
-        reqDoc["instructions"] = "Respond in 80 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind. Do not mention where information came from. When quoting current or time-sensitive information, use your web search tool to check live sources first.";
+        reqDoc["instructions"] = "Respond in 120 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind. Do not mention where information came from. When quoting current or time-sensitive information, use your web search tool to check live sources first.";
 
         JsonArray input = reqDoc["input"].to<JsonArray>();
         for (int i = 0; i < historyCount - 1; i++) {
@@ -1568,7 +1654,7 @@ String callGroq(const char* prompt) {
         JsonArray messages = reqDoc["messages"].to<JsonArray>();
         JsonObject sysMsgObj = messages.add<JsonObject>();
         sysMsgObj["role"]    = "system";
-        sysMsgObj["content"] = "Respond in 80 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind.";
+        sysMsgObj["content"] = "Respond in 120 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind.";
 
         for (int i = 0; i < historyCount - 1; i++) {
             if (history[i].displayOnly) continue;
@@ -1687,6 +1773,7 @@ void sendPrompt() {
         strncpy(prompt, inputBuf, 127);
         inputBuf[0] = '\0';
         inputLen    = 0;
+        inputCursor = 0;
     }
     prompt[127] = '\0';
     moreMode = false;
@@ -1706,11 +1793,13 @@ void sendPrompt() {
         for (int i = 0; i < 50 && WiFi.status() != WL_CONNECTED; i++) delay(100);
     }
     String response = useGroq ? callGroq(prompt) : (useGrok ? callGrok(prompt) : callGemini(prompt));
-    // Retry once on empty response (transient WiFi disruption after NimBLE deinit on C3)
-    if (response == "ERR: empty response") {
-        if (WiFi.status() != WL_CONNECTED) WiFi.reconnect();
+    // Retry once only if WiFi actually dropped — server-side empty responses don't warrant
+    // a retry (would just stack another 8s timeout on an already-bad connection).
+    if (response == "ERR: empty response" && WiFi.status() != WL_CONNECTED) {
+        WiFi.reconnect();
         for (int i = 0; i < 50 && WiFi.status() != WL_CONNECTED; i++) delay(100);
-        response = useGroq ? callGroq(prompt) : (useGrok ? callGrok(prompt) : callGemini(prompt));
+        if (WiFi.status() == WL_CONNECTED)
+            response = useGroq ? callGroq(prompt) : (useGrok ? callGrok(prompt) : callGemini(prompt));
     }
     halAfterApiCall();
 
@@ -2042,7 +2131,7 @@ void loop() {
             case INPUT_NEW_CONV:
 do_new_conv:
                 historyCount = 0; lineCount = 0; scrollOffset = 0;
-                moreMode = false; inputBuf[0] = '\0'; inputLen = 0;
+                moreMode = false; inputBuf[0] = '\0'; inputLen = 0; inputCursor = 0;
                 history[historyCount].isUser = true;
                 history[historyCount].isError = false;
                 history[historyCount].displayOnly = true;
@@ -2060,11 +2149,11 @@ do_new_conv:
             case INPUT_ENTER:
                 // Word commands
                 if (strcmp(inputBuf, "new") == 0) {
-                    inputBuf[0] = '\0'; inputLen = 0;
+                    inputBuf[0] = '\0'; inputLen = 0; inputCursor = 0;
                     goto do_new_conv;
                 }
                 if (strcmp(inputBuf, "more") == 0) {
-                    inputBuf[0] = '\0'; inputLen = 0;
+                    inputBuf[0] = '\0'; inputLen = 0; inputCursor = 0;
                     moreMode = true;
                     sendPrompt();
                     break;
@@ -2076,8 +2165,9 @@ do_new_conv:
                 if (moreMode) sendPrompt();
                 break;
             case INPUT_BACKSPACE:
-                if (inputLen > 0) {
-                    inputBuf[--inputLen] = '\0';
+                if (inputCursor > 0) {
+                    memmove(inputBuf + inputCursor - 1, inputBuf + inputCursor, inputLen - inputCursor + 1);
+                    inputLen--; inputCursor--;
                     if (inputLen == 0 && historyCount > 0) moreMode = true;
                     drawInputBar();
                 }
@@ -2085,10 +2175,17 @@ do_new_conv:
             case INPUT_CHAR:
                 if (ev.ch != 0 && inputLen < INPUT_MAX_LEN) {
                     moreMode = false;
-                    inputBuf[inputLen++] = ev.ch;
-                    inputBuf[inputLen]   = '\0';
+                    memmove(inputBuf + inputCursor + 1, inputBuf + inputCursor, inputLen - inputCursor + 1);
+                    inputBuf[inputCursor] = ev.ch;
+                    inputLen++; inputCursor++;
                     drawInputBar();
                 }
+                break;
+            case INPUT_CURSOR_LEFT:
+                if (inputCursor > 0) { inputCursor--; drawInputBar(); }
+                break;
+            case INPUT_CURSOR_RIGHT:
+                if (inputCursor < inputLen) { inputCursor++; drawInputBar(); }
                 break;
             default:
                 break;

@@ -124,6 +124,8 @@ static void hidNotifyCB(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, 
         else if (ctrl && code == 0x10) { ev.type = INPUT_MORE; }       // Ctrl+M
         else if (code == 0x52) { ev.type = INPUT_SCROLL_DOWN; }        // ↑ = scroll toward newer
         else if (code == 0x51) { ev.type = INPUT_SCROLL_UP; }          // ↓ = scroll toward older
+        else if (code == 0x50) { ev.type = INPUT_CURSOR_LEFT; }        // ← = move cursor left
+        else if (code == 0x4F) { ev.type = INPUT_CURSOR_RIGHT; }       // → = move cursor right
         else if (code == 0x28) { ev.type = INPUT_ENTER; }              // Enter
         else if (code == 0x2A) { ev.type = INPUT_BACKSPACE; }          // Backspace
         else {
