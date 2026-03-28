@@ -19,7 +19,7 @@ WS2812 RGB LED is on GPIO 15. Used for WiFi status: solid = connected, flashing 
 New `env:s2mini` extending `base_config`:
 - `board = lolin_s2_mini`
 - `build_src_filter = +<*> -<hal_cyd28.cpp> -<hal_c3.cpp>`
-- `build_flags`: `-DTARGET_S2` + same ST7789/TFT flags as `env:c3` (240×320, same SPI pins)
+- `build_flags`: `-DTARGET_S2 -DTARGET_C3` + ST7789 flags: MOSI=11, SCLK=12, CS=10, DC=17, RST=18, MISO=-1, BL=-1
 - `lib_deps`: base + `bodmer/TFT_eSPI` + `adafruit/Adafruit NeoPixel`
 - No NimBLE, no `ARDUINO_USB_MODE`
 
