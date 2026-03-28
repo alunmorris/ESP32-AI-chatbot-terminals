@@ -124,7 +124,8 @@ static volatile bool    s_devGone = false;
 static void transferCb(usb_transfer_t* xfer) {
     if (xfer->status == USB_TRANSFER_STATUS_COMPLETED && xfer->actual_num_bytes > 0)
         parseHidReport(xfer->data_buffer, xfer->actual_num_bytes);
-    if (s_devOpen) usb_host_transfer_submit(xfer);  // resubmit for next interrupt report
+    if (s_devOpen && xfer->status == USB_TRANSFER_STATUS_COMPLETED)
+        usb_host_transfer_submit(xfer);  // resubmit for next interrupt report
 }
 
 static void clientEventCb(const usb_host_client_event_msg_t* msg, void*) {
@@ -149,10 +150,10 @@ static bool findHidEndpoint(usb_device_handle_t dev,
     int     offset = 0;
     const uint8_t* p = (const uint8_t*)cfg;
 
-    while (offset < cfg->wTotalLength) {
+    while (offset + 2 <= cfg->wTotalLength) {
         uint8_t dLen  = p[offset];
         uint8_t dType = p[offset + 1];
-        if (!dLen) break;
+        if (!dLen || offset + dLen > cfg->wTotalLength) break;
 
         if (dType == 0x04) {  // USB_B_DESCRIPTOR_TYPE_INTERFACE
             const usb_intf_desc_t* intf = (const usb_intf_desc_t*)(p + offset);
@@ -213,7 +214,10 @@ static void openDevice(uint8_t addr) {
 
 static void closeDevice() {
     s_devOpen = false;
-    vTaskDelay(pdMS_TO_TICKS(20));  // let any in-flight transfer callback fire
+    if (s_xfer && s_dev) {
+        usb_host_endpoint_halt(s_dev, s_xfer->bEndpointAddress);
+        usb_host_endpoint_flush(s_dev, s_xfer->bEndpointAddress);
+    }
     if (s_xfer) { usb_host_transfer_free(s_xfer); s_xfer = nullptr; }
     if (s_dev)  {
         usb_host_interface_release(s_client, s_dev, s_ifaceNum);
