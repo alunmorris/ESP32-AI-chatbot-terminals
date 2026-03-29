@@ -145,8 +145,13 @@ void clearWifiPass(const char* ssid) {
 }
 
 // --- Screen dimensions ---
-#define SCREEN_W        320
-#define SCREEN_H        240
+#ifdef TARGET_P3
+#  define SCREEN_W      284   // ST7789P3 display module (part no.), 284×76 landscape, ESP32-C3
+#  define SCREEN_H       76
+#else
+#  define SCREEN_W      320
+#  define SCREEN_H      240
+#endif
 //#define ROTATE_180          // uncomment to rotate display 180° (USB on left)
 
 // --- Layout (KB shown) ---
@@ -240,6 +245,11 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define LINE_H_LARGE     FONT_LINE_H          // VLW font yAdvance (set in font.h)
 #define LINE_H_SMALL     12                   // DejaVuSansBold10px line height
 #define SPLASH_H         (3 * LINE_H_LARGE)   // boot splash: 3 lines tall
+#ifdef TARGET_P3
+#  define LINE_H_P3 12   // P3 284×76: tighter than yAdvance=15, gives 6 lines
+#else
+#  define LINE_H_P3 LINE_H_LARGE
+#endif
 
 // --- Input bar ---
 #define INPUT_BUF_SIZE  256     // input text buffer including null terminator
@@ -1825,7 +1835,7 @@ void drawCrosshair(int x, int y) {
 #ifdef TARGET_C3
 // Draw one line of text as a sprite to avoid C3 per-glyph SPI glitches.
 static void c3Line(int y, const char* text, uint16_t col, uint16_t bg) {
-    int lineH = LINE_H_LARGE;
+    int lineH = LINE_H_LARGE; // sprite height always 15 — font yAdvance needs full height to render
     TFT_eSprite spr(&tft);
     spr.setColorDepth(16);
     if (spr.createSprite(SCREEN_W, lineH)) {
@@ -1843,7 +1853,13 @@ static void c3Line(int y, const char* text, uint16_t col, uint16_t bg) {
 void showModelChoices() {
     uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
     uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
-#ifdef TARGET_C3
+#ifdef TARGET_P3
+    int optY = 2 * LINE_H_P3;
+    c3Line(optY, "1 Gemini 2.5 Flash", fg, bg); optY += LINE_H_P3;
+    c3Line(optY, "4 Grok 4.1 Fast",    fg, bg); optY += LINE_H_P3;
+    if (invertDisplay)
+        c3Line(optY, "D Dark Theme",   fg, bg);
+#elif defined(TARGET_C3)
     int optY = 2 * LINE_H_LARGE;
     c3Line(optY, "1 Gemini 2.5 Flash", fg, bg); optY += LINE_H_LARGE;
     c3Line(optY, "2 Gemini 3 Flash",   fg, bg); optY += LINE_H_LARGE;
@@ -1883,8 +1899,12 @@ void selectModel() {
         if (ev.type != INPUT_CHAR) continue;
         char ch = ev.ch;
 
-        // Models 1–3 (Gemini)
-        if (ch >= '1' && ch <= '3') {
+        // Models 1–3 (Gemini); P3 only uses model 1
+        if (ch >= '1' && ch <= '3'
+#ifdef TARGET_P3
+            && ch == '1'
+#endif
+        ) {
             int i = ch - '1';
             halClickSound();
             strncpy(GEMINI_MODEL, modelIds[i], 47); GEMINI_MODEL[47] = '\0';
@@ -1894,9 +1914,9 @@ void selectModel() {
             int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
             tft.fillRect(0, 0, SCREEN_W, clearH, bg);
 #ifdef TARGET_C3
-            c3Line(0,                "Cheap AI Chat Keyboard", TFT_GREEN,    bg);
-            c3Line(LINE_H_LARGE,     GEMINI_MODEL,             TFT_GREEN,    bg);
-            c3Line(2 * LINE_H_LARGE, "Ready.",                 TFT_DARKGREY, bg);
+            c3Line(0,              "Cheap AI Chat Keyboard", TFT_GREEN,    bg);
+            c3Line(LINE_H_P3,      GEMINI_MODEL,             TFT_GREEN,    bg);
+            c3Line(2 * LINE_H_P3,  "Ready.",                 TFT_DARKGREY, bg);
 #else
             uiFontOn();
             tft.setTextColor(TFT_GREEN, bg);
@@ -1915,9 +1935,9 @@ void selectModel() {
             int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
             tft.fillRect(0, 0, SCREEN_W, clearH, bg);
 #ifdef TARGET_C3
-            c3Line(0,                "Cheap AI Chat Keyboard", TFT_GREEN,    bg);
-            c3Line(LINE_H_LARGE,     "Grok 4.1 Fast",          TFT_GREEN,    bg);
-            c3Line(2 * LINE_H_LARGE, "Ready.",                 TFT_DARKGREY, bg);
+            c3Line(0,              "Cheap AI Chat Keyboard", TFT_GREEN,    bg);
+            c3Line(LINE_H_P3,      "Grok 4.1 Fast",          TFT_GREEN,    bg);
+            c3Line(2 * LINE_H_P3,  "Ready.",                 TFT_DARKGREY, bg);
 #else
             uiFontOn();
             tft.setTextColor(TFT_GREEN, bg);
@@ -1929,6 +1949,7 @@ void selectModel() {
 #endif
             return;
         }
+#ifndef TARGET_P3
         if (ch == '5') {
             halClickSound();
             useGroq = true; useGrok = false;
@@ -1936,9 +1957,9 @@ void selectModel() {
             int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
             tft.fillRect(0, 0, SCREEN_W, clearH, bg);
 #ifdef TARGET_C3
-            c3Line(0,                "Cheap AI Chat Keyboard", TFT_GREEN,    bg);
-            c3Line(LINE_H_LARGE,     "Groq GPT-OSS-120b",      TFT_GREEN,    bg);
-            c3Line(2 * LINE_H_LARGE, "Ready.",                 TFT_DARKGREY, bg);
+            c3Line(0,              "Cheap AI Chat Keyboard", TFT_GREEN,    bg);
+            c3Line(LINE_H_P3,      "Groq GPT-OSS-120b",      TFT_GREEN,    bg);
+            c3Line(2 * LINE_H_P3,  "Ready.",                 TFT_DARKGREY, bg);
 #else
             uiFontOn();
             tft.setTextColor(TFT_GREEN, bg);
@@ -1950,14 +1971,15 @@ void selectModel() {
 #endif
             return;
         }
+#endif // !TARGET_P3
         if (ch == 'd' || ch == 'D') {
             invertDisplay = !invertDisplay;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillScreen(bg);
             drawInputBar();
 #ifdef TARGET_C3
-            c3Line(0,            "Cheap AI Chat Keyboard", invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
-            c3Line(LINE_H_LARGE, "Select AI model:",       invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
+            c3Line(0,          "Cheap AI Chat Keyboard", invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
+            c3Line(LINE_H_P3,  "Select AI model:",       invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
 #else
             uiFontOn(); tft.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
             tft.drawString("Cheap AI Chat Keyboard", 2, 0);
@@ -1984,6 +2006,12 @@ void selectModel() {
 }
 
 void setup() {
+    Serial.begin(115200);
+#ifdef TARGET_C3
+    delay(1500);  // USB CDC needs time to enumerate before first output
+#endif
+    Serial.println("[Boot] setup() start");
+
     loadWifiCreds();   // load NVS; shows AP picker on first boot if no credentials stored
 
 #ifndef TARGET_C3
@@ -1995,19 +2023,24 @@ void setup() {
         p.remove("valid");
         p.remove("orient");
         p.end();
-        Serial.begin(115200);
         Serial.println("[Cal] Reset to defaults via BOOT button");
         delay(500);
     }
 #endif
-    Serial.begin(115200);
 #ifndef TARGET_C3
     Serial.println("[Cal] Loaded touch calibration from NVS");
 #endif
     waitMsgIdx = random(NUM_WAIT_MSGS);
     // Display (init before backlight to avoid white flash)
     tft.init();
-#ifdef TARGET_C3
+#ifdef TARGET_P3
+    // ST7789P3 284×76 native landscape
+    tft.setRotation(0);
+#if defined(TFT_BL) && (TFT_BL >= 0)
+    pinMode(TFT_BL, OUTPUT);
+    digitalWrite(TFT_BL, HIGH);
+#endif
+#elif defined(TARGET_C3)
     // ST7789 GRAM is 240col x 320row (portrait-native). Pre-fill all GRAM in
     // rotation 0 (CASET 0..239, RASET 0..319 both valid) so that GRAM rows
     // 240..319 contain COL_BG rather than power-on white. Without this, those
@@ -2053,8 +2086,8 @@ void setup() {
         uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
         uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
 #ifdef TARGET_C3
-        c3Line(0,            "Cheap AI Chat Keyboard", fg, bg);
-        c3Line(LINE_H_LARGE, "Select AI model:",       fg, bg);
+        c3Line(0,          "Cheap AI Chat Keyboard", fg, bg);
+        c3Line(LINE_H_P3,  "Select AI model:",       fg, bg);
 #else
         uiFontOn();
         tft.setTextColor(fg, bg);

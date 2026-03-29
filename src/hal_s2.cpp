@@ -3,26 +3,27 @@
 // GPIO 19/20: D-/D+ USB OTG — USB-A socket here for wired keyboard (5 V VBUS required)
 // No BLE, no touch, no speaker.
 // 280326 Initial implementation
+// 280326 S2_DUMMY_INPUT: bypass USB, feed fixed string into input ring buffer
 #ifdef TARGET_S2
 
 #include "hal.h"
 #include <Arduino.h>
-#include <Adafruit_NeoPixel.h>
 #include <TFT_eSPI.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include "font.h"
+#ifndef S2_DUMMY_INPUT
 #include "usb/usb_host.h"
+#endif
 
 extern TFT_eSPI tft;
 
-// ── NeoPixel ──────────────────────────────────────────────────────────────────
+// ── LED (simple GPIO, active-high) ────────────────────────────────────────────
 #define LED_PIN 15
-static Adafruit_NeoPixel led(1, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 void halSetLed(uint8_t r, uint8_t g, uint8_t b) {
-    led.setPixelColor(0, led.Color(r, g, b));
-    led.show();
+    // Single-colour LED: on if any channel non-zero
+    digitalWrite(LED_PIN, (r || g || b) ? HIGH : LOW);
 }
 
 // ── Ring buffer ───────────────────────────────────────────────────────────────
@@ -47,6 +48,7 @@ bool halPollInput(InputEvent* ev) {
     return has;
 }
 
+#ifndef S2_DUMMY_INPUT
 // ── HID scan code → ASCII ─────────────────────────────────────────────────────
 // Identical to hal_c3.cpp — pure table lookup, no BLE dependency.
 static char hidToAscii(uint8_t code, bool shifted) {
@@ -117,9 +119,10 @@ static uint8_t                  s_ifaceNum = 0;
 static volatile bool            s_devOpen  = false;
 
 // Flags set by clientEventCb, consumed by usbClientTask
-static volatile uint8_t s_newAddr = 0;
-static volatile bool    s_newDev  = false;
-static volatile bool    s_devGone = false;
+static volatile uint8_t s_newAddr    = 0;
+static volatile bool    s_newDev     = false;
+static volatile bool    s_devGone    = false;
+static volatile bool    s_usbInitErr = false;  // set if usb_host_install fails
 
 static void transferCb(usb_transfer_t* xfer) {
     if (xfer->status == USB_TRANSFER_STATUS_COMPLETED && xfer->actual_num_bytes > 0)
@@ -233,7 +236,13 @@ static void usbHostDaemonTask(void*) {
     usb_host_config_t cfg = {};
     cfg.skip_phy_setup = false;
     cfg.intr_flags     = ESP_INTR_FLAG_LEVEL1;
-    ESP_ERROR_CHECK(usb_host_install(&cfg));
+    esp_err_t err = usb_host_install(&cfg);
+    if (err != ESP_OK) {
+        Serial.printf("[USB] host_install failed: 0x%x\n", err);
+        s_usbInitErr = true;
+        vTaskDelete(nullptr);
+        return;
+    }
     Serial.println("[USB] host lib installed");
     uint32_t flags;
     for (;;) {
@@ -244,14 +253,21 @@ static void usbHostDaemonTask(void*) {
 
 // USB client task — registers as a client, waits for device events, opens/closes keyboard.
 static void usbClientTask(void*) {
-    vTaskDelay(pdMS_TO_TICKS(50));  // ensure daemon has installed the host lib
+    vTaskDelay(pdMS_TO_TICKS(100));  // ensure daemon has installed the host lib
+    if (s_usbInitErr) { vTaskDelete(nullptr); return; }
 
     usb_host_client_config_t clientCfg = {};
     clientCfg.is_synchronous             = false;
     clientCfg.max_num_event_msg          = 5;
     clientCfg.async.client_event_callback = clientEventCb;
     clientCfg.async.callback_arg          = nullptr;
-    ESP_ERROR_CHECK(usb_host_client_register(&clientCfg, &s_client));
+    esp_err_t err = usb_host_client_register(&clientCfg, &s_client);
+    if (err != ESP_OK) {
+        Serial.printf("[USB] client_register failed: 0x%x\n", err);
+        s_usbInitErr = true;
+        vTaskDelete(nullptr);
+        return;
+    }
 
     for (;;) {
         usb_host_client_handle_events(s_client, pdMS_TO_TICKS(100));
@@ -267,12 +283,32 @@ static void usbClientTask(void*) {
     }
 }
 
+#else  // S2_DUMMY_INPUT ────────────────────────────────────────────────────────
+
+// Feeds "ESP32-S2 dummy text\n" into the ring buffer once, 3 s after boot,
+// then repeats every 10 s so the app stays exercised.
+static void dummyInputTask(void*) {
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    for (;;) {
+        const char* msg = "ESP32-S2 dummy text";
+        for (const char* p = msg; *p; p++) {
+            InputEvent ev = { INPUT_CHAR, *p };
+            rb_push(ev);
+            vTaskDelay(pdMS_TO_TICKS(80));
+        }
+        InputEvent enter = { INPUT_ENTER, 0 };
+        rb_push(enter);
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+}
+
+#endif  // S2_DUMMY_INPUT
+
 // ── halInit ───────────────────────────────────────────────────────────────────
 void halInit() {
     rb_mutex = xSemaphoreCreateMutex();
-    led.begin();
-    led.setBrightness(50);
-    halSetLed(0, 0, 64);  // dim blue during boot
+    pinMode(LED_PIN, OUTPUT);
+    halSetLed(0, 0, 1);  // on during boot
 
     const uint16_t BOOT_BG = 0xC618;  // matches COL_INVERT_BG in main.cpp
     const int lineH = FONT_LINE_H;
@@ -292,15 +328,33 @@ void halInit() {
         }
     };
 
+#ifdef S2_DUMMY_INPUT
+    bootRow(0, "Dummy input mode");
+    xTaskCreate(dummyInputTask, "dummy_input", 2048, nullptr, 1, nullptr);
+#else
     bootRow(0, "USB keyboard...");
 
-    // Daemon at priority 5, client at priority 4 — daemon must install lib first
-    xTaskCreate(usbHostDaemonTask, "usb_host",   4096, nullptr, 5, nullptr);
-    xTaskCreate(usbClientTask,     "usb_client", 4096, nullptr, 4, nullptr);
+    // Use priority 1 (same as Arduino setup task) so both tasks wait until
+    // halInit() reaches its vTaskDelay loop before preempting.
+    xTaskCreate(usbHostDaemonTask, "usb_host",   4096, nullptr, 1, nullptr);
+    xTaskCreate(usbClientTask,     "usb_client", 4096, nullptr, 1, nullptr);
 
-    // Wait up to 5 s for a keyboard to connect
-    for (int i = 0; i < 50 && !s_devOpen; i++) vTaskDelay(pdMS_TO_TICKS(100));
+    // Wait up to 5 s for keyboard, or bail out if USB init failed
+    for (int i = 0; i < 50 && !s_devOpen && !s_usbInitErr; i++) vTaskDelay(pdMS_TO_TICKS(100));
+
+    if (s_usbInitErr) {
+        // USB host init failed — show red error so we can see the device is running
+        tft.fillScreen(TFT_RED);
+        tft.setTextColor(TFT_WHITE, TFT_RED);
+        tft.setTextFont(1);
+        tft.drawString("USB host init failed", 6, 10);
+        tft.drawString("Check UART0 for error", 6, 30);
+        halSetLed(64, 0, 0);  // dim red LED
+        return;  // let setup() continue; keyboard won't work but device boots
+    }
+
     if (!s_devOpen) bootRow(1, "Connect keyboard");
+#endif
 
     // Clear boot rows before returning to main
     tft.fillRect(0, 0, tft.width(), 3 * lineH, BOOT_BG);
