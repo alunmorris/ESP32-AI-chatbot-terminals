@@ -1,9 +1,12 @@
-// hal_s2.cpp — ESP32-S2 Mini: USB HID host keyboard + WS2812 status LED
-// GPIO 15: WS2812 RGB LED (on-board) — driven by halSetLed(); main.cpp uses for WiFi status
-// GPIO 19/20: D-/D+ USB OTG — USB-A socket here for wired keyboard (5 V VBUS required)
+// hal_s2.cpp — ESP32-S2 Mini: USB HID host keyboard + simple GPIO LED
+// GPIO 15: single LED (active-high) — driven by halSetLed(); main.cpp uses for WiFi status
+// GPIO 19/20: D-/D+ USB OTG via USB-C — keyboard powered externally (5 V VBUS required)
 // No BLE, no touch, no speaker.
 // 280326 Initial implementation
 // 280326 S2_DUMMY_INPUT: bypass USB, feed fixed string into input ring buffer
+// 290326 LED: replace NeoPixel with simple GPIO (active-high)
+// 290326 SPI: use GPIO 34/35/36/37 (native FSPI pins on right header); MISO must be real pin
+// 290326 USB host: require ARDUINO_USB_CDC_ON_BOOT=0 to free OTG peripheral from CDC
 #ifdef TARGET_S2
 
 #include "hal.h"
