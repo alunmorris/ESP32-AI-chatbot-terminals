@@ -41,9 +41,13 @@
 
 #include <Arduino.h>
 #include <SPI.h>
-#include <TFT_eSPI.h>
-#include "font.h"                        // selects 12px or 18px font via FONT_18PX
-#include "fonts/DejaVuSansBold8px.h"   // VLW smooth font 10px (Unicode)
+#ifdef TARGET_EPAPER
+#  include "display_epaper.h"  // GxEPD2 wrapper; defines FONT_LINE_H, TFT_eSprite alias, etc.
+#else
+#  include <TFT_eSPI.h>
+#  include "font.h"                        // selects 12px or 18px font via FONT_18PX
+#  include "fonts/DejaVuSansBold8px.h"   // VLW smooth font 10px (Unicode)
+#endif
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
@@ -197,7 +201,12 @@ void clearWifiPass(const char* ssid) {
 #endif
 
 // --- Objects ---
+#ifdef TARGET_EPAPER
+EpaperDisplay tft;
+#  define TFT_eSprite EpaperSprite   // redirects all TFT_eSprite spr(&tft) to the stub
+#else
 TFT_eSPI tft = TFT_eSPI();
+#endif
 
 // --- Keyboard layout ---
 #ifdef TARGET_C3
