@@ -1,8 +1,6 @@
 // hal_epaper.cpp — ESP32-C3 Supermini: NimBLE BLE HID host keyboard input
 // No LED, no speaker, no touch.
-// 240326 Boot screen: sprite-based rendering (bootRow lambda) to fix C3 SPI glitches (white rect, garbled text)
-// 240326 Font selection: use FONT_LOAD/FONT_UNLOAD macros from font.h; support FONT_BUILTIN_16PX
-// 300326 hal_epaper.cpp: replace TFT_eSPI boot screen with GxEPD2 frame-based rendering
+// 300326 Initial: BLE keyboard + GxEPD2 frame-based boot screen
 #ifdef TARGET_EPAPER
 
 #include "hal.h"
@@ -307,10 +305,10 @@ static void setupScan() {
 // --- halInit ---
 void halInit() {
     rb_mutex = xSemaphoreCreateMutex();
-    Serial.println("[C3 BLE] Starting NimBLE init...");
+    Serial.println("[EPD BLE] Starting NimBLE init...");
     NimBLEDevice::init("");
     NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_PUBLIC);  // use factory MAC, stable across reinits
-    Serial.println("[C3 BLE] NimBLE init done");
+    Serial.println("[EPD BLE] NimBLE init done");
     NimBLEDevice::setSecurityAuth(true, false, false);  // bonding, Just Works
     // NimBLE 2.x: security callbacks live in NimBLEClientCallbacks (see ClientCB above)
 
@@ -335,7 +333,7 @@ void halInit() {
     };
 
     bondedAddr = loadBondedAddress(hasBonded);
-    Serial.printf("[C3 BLE] hasBonded=%d\n", hasBonded);
+    Serial.printf("[EPD BLE] hasBonded=%d\n", hasBonded);
 
     // Row 0 always: "Keyboard connection..."
     bootRow(0, "Keyboard connection...");
@@ -349,7 +347,7 @@ void halInit() {
         // 3 × 10s = 30s window; ScanCB sets wantConnect when it finds the keyboard
         for (int w = 0; w < 3 && !connected; w++) {
             wantConnect = false;
-            Serial.printf("[C3 BLE] reconnect scan window %d\n", w);
+            Serial.printf("[EPD BLE] reconnect scan window %d\n", w);
             scan->start(10, false);
             for (int i = 0; i < 100 && !connected; i++) {
                 if (wantConnect) {
@@ -363,7 +361,7 @@ void halInit() {
             }
         }
         scan->stop();
-        Serial.printf("[C3 BLE] reconnect scan done: connected=%d\n", connected);
+        Serial.printf("[EPD BLE] reconnect scan done: connected=%d\n", connected);
     }
 
     if (!connected) {
