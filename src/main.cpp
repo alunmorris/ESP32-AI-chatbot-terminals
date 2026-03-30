@@ -675,7 +675,7 @@ void drawHistory() {
 
     // On C3: slot 0 = model heading, last slot = inline input prompt.
     int histSlots = maxVis;
-#ifdef TARGET_C3
+#if defined(TARGET_C3) || defined(TARGET_EPAPER)
     histSlots = maxVis - 2;
 #endif
     int firstIdx = lineCount - histSlots - scrollOffset;
