@@ -2041,6 +2041,33 @@ void showModelChoices() {
     c3Line(optY, "4 Grok 4.1 Fast",    fg, bg); optY += LINE_H_P3;
     if (invertDisplay)
         c3Line(optY, "D Dark Theme",   fg, bg);
+#elif defined(TARGET_EPAPER)
+    // Full frame: show header + model options
+    tft.beginFrame();
+    tft.epd.fillScreen(GxEPD_WHITE);
+    tft.u8g2.setFont(EPD_FONT);
+    tft.u8g2.setForegroundColor(GxEPD_BLACK);
+    tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+    tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+    tft.u8g2.print("Cheap AI Chat Keyboard");
+    tft.u8g2.setCursor(2, LINE_H_LARGE + EPD_FONT_ASCENT);
+    tft.u8g2.print("Select AI model:");
+    {
+        int optY = 2 * LINE_H_LARGE;
+        const char* opts[] = {
+            "1 Gemini 2.5 Flash",
+            "2 Gemini 3 Flash",
+            "3 Gemini 3.1 Pro",
+            "4 Grok 4.1 Fast",
+            "5 Groq OSS-120b"
+        };
+        for (int i = 0; i < 5; i++) {
+            tft.u8g2.setCursor(2, optY + EPD_FONT_ASCENT);
+            tft.u8g2.print(opts[i]);
+            optY += LINE_H_LARGE;
+        }
+    }
+    tft.endFrame();
 #elif defined(TARGET_C3)
     int optY = 2 * LINE_H_LARGE;
     c3Line(optY, "1 Gemini 2.5 Flash", fg, bg); optY += LINE_H_LARGE;
@@ -2267,7 +2294,7 @@ void setup() {
     {
         uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
         uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
-#ifdef TARGET_C3
+#if defined(TARGET_C3) && !defined(TARGET_EPAPER)
         c3Line(0,          "Cheap AI Chat Keyboard", fg, bg);
         c3Line(LINE_H_P3,  "Select AI model:",       fg, bg);
 #else
