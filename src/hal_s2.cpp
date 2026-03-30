@@ -104,6 +104,7 @@ static char hidToAscii(uint8_t code, bool shifted, bool capsLock) {
 // Some devices ignore SET_IDLE(0) and keep sending the same report while a key is held.
 static uint8_t s_lastKeycodes[6] = {};
 static bool    s_capsLock        = false;
+static volatile bool s_ledsDirty = false;
 
 static void parseHidReport(const uint8_t* data, size_t len) {
     if (len < 3) return;
@@ -137,7 +138,7 @@ static void parseHidReport(const uint8_t* data, size_t len) {
         else if (code == 0x4E)         ev.type = INPUT_SCROLL_UP;   // PgDn = older (same as ↓)
         else if (code == 0x4A)         ev.type = INPUT_MODEL_MENU;  // Home → model menu
         else if (code == 0x4C)         ev.type = INPUT_DELETE;      // Del → forward-delete
-        else if (code == 0x39)         { s_capsLock = !s_capsLock; }
+        else if (code == 0x39)         { s_capsLock = !s_capsLock; s_ledsDirty = true; }
         else if (code == 0x50)         ev.type = INPUT_CURSOR_LEFT;
         else if (code == 0x4F)         ev.type = INPUT_CURSOR_RIGHT;
         else if (code == 0x28)         ev.type = INPUT_ENTER;
@@ -157,7 +158,7 @@ static usb_transfer_t*          s_xfer     = nullptr;
 static uint8_t                  s_ifaceNum = 0;
 static volatile bool            s_devOpen  = false;
 
-// Flags set by clientEventCb, consumed by usbClientTask
+// Flags set by clientEventCb / parseHidReport, consumed by usbClientTask
 static volatile uint8_t s_newAddr    = 0;
 static volatile bool    s_newDev     = false;
 static volatile bool    s_devGone    = false;
@@ -376,6 +377,35 @@ static void usbHostDaemonTask(void*) {
 }
 
 // USB client task — registers as a client, waits for device events, opens/closes keyboard.
+// Send HID SET_REPORT (Output) to update keyboard LEDs.
+// Bit 0 = Num Lock, bit 1 = Caps Lock, bit 2 = Scroll Lock.
+// Must be called from usbClientTask — control transfers require client task context.
+static void sendLedReport() {
+    if (!s_devOpen || !s_client || !s_dev) return;
+    usb_transfer_t* ctrl = nullptr;
+    if (usb_host_transfer_alloc(8 + 1, 0, &ctrl) != ESP_OK) return;
+    uint8_t leds = s_capsLock ? 0x02 : 0x00;
+    ctrl->data_buffer[0] = 0x21;        // bmRequestType: Host-to-Device, Class, Interface
+    ctrl->data_buffer[1] = 0x09;        // bRequest: SET_REPORT
+    ctrl->data_buffer[2] = 0x00;        // wValue low:  Report ID 0
+    ctrl->data_buffer[3] = 0x02;        // wValue high: Report Type = Output (2)
+    ctrl->data_buffer[4] = s_ifaceNum;  // wIndex: interface number
+    ctrl->data_buffer[5] = 0x00;
+    ctrl->data_buffer[6] = 0x01;        // wLength: 1 byte
+    ctrl->data_buffer[7] = 0x00;
+    ctrl->data_buffer[8] = leds;        // LED state byte
+    ctrl->num_bytes        = 9;
+    ctrl->device_handle    = s_dev;
+    ctrl->bEndpointAddress = 0x00;      // EP0 control
+    ctrl->timeout_ms       = 500;
+    static SemaphoreHandle_t ledDone = xSemaphoreCreateBinary();
+    ctrl->callback = [](usb_transfer_t* t) { xSemaphoreGive((SemaphoreHandle_t)t->context); };
+    ctrl->context  = (void*)ledDone;
+    if (usb_host_transfer_submit_control(s_client, ctrl) == ESP_OK)
+        xSemaphoreTake(ledDone, pdMS_TO_TICKS(500));
+    usb_host_transfer_free(ctrl);
+}
+
 static void usbClientTask(void*) {
     vTaskDelay(pdMS_TO_TICKS(100));  // ensure daemon has installed the host lib
     if (s_usbInitErr) { vTaskDelete(nullptr); return; }
@@ -403,6 +433,10 @@ static void usbClientTask(void*) {
         if (s_devGone) {
             s_devGone = false;
             closeDevice();
+        }
+        if (s_ledsDirty) {
+            s_ledsDirty = false;
+            sendLedReport();
         }
     }
 }
