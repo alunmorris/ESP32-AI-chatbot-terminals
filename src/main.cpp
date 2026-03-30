@@ -1135,12 +1135,25 @@ void updateLedWifi() {
 // Returns true if connected. Pass showSplash=true for boot (draws title + "Connecting:" text).
 bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
     if (showSplash) {
+#ifdef TARGET_EPAPER
+        char wifiMsg[64];
+        snprintf(wifiMsg, sizeof(wifiMsg), "WiFi: %.44s", ssid);
+        tft.beginFrame();
+        tft.epd.fillScreen(GxEPD_WHITE);
+        tft.u8g2.setFont(EPD_FONT);
+        tft.u8g2.setForegroundColor(GxEPD_BLACK);
+        tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+        tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+        tft.u8g2.print(wifiMsg);
+        tft.endFrame();
+#else
         fontOn();
         tft.setTextColor(TFT_NAVY, TFT_WHITE);
         char wifiMsg[80];
         snprintf(wifiMsg, sizeof(wifiMsg), "Connecting: %.55s...", ssid);
         tft.drawString(wifiMsg, 2, 0);
         fontOff();
+#endif
     }
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, pass);
@@ -1149,7 +1162,9 @@ bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
         delay(WIFI_RETRY_DELAY_MS);
         attempts++;
     }
+#ifndef TARGET_EPAPER
     if (showSplash) tft.fillRect(0, 0, SCREEN_W, LINE_H_LARGE + 2, TFT_WHITE);
+#endif
 #ifdef TARGET_C3
     WiFi.setSleep(true);  // modem sleep: yields radio to BLE between beacons
 #endif
