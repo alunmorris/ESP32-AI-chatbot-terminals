@@ -15,6 +15,8 @@ enum InputEventType {
     INPUT_MORE,         // CYD28: More button; C3: Ctrl+M
     INPUT_CURSOR_LEFT,  // C3: ← arrow key
     INPUT_CURSOR_RIGHT, // C3: → arrow key
+    INPUT_MODEL_MENU,   // S2: Home key — re-enter model selection
+    INPUT_DELETE,       // S2: Del key — forward-delete character at cursor
 };
 
 struct InputEvent {

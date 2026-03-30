@@ -384,6 +384,28 @@ static const char* rssiToBars(int rssi) {
     return "....";
 }
 
+// WiFi signal colour for input bar icon (strong→green, good→orange, weak→yellow, none→red).
+static uint16_t rssiColor() {
+    if (WiFi.status() != WL_CONNECTED) return TFT_RED;
+    int r = WiFi.RSSI();
+    if (r >= -60) return TFT_GREEN;
+    if (r >= -70) return TFT_ORANGE;
+    if (r >= -80) return TFT_YELLOW;
+    return TFT_RED;
+}
+
+// Draw a WiFi fan icon (dot + 3 arcs) into a sprite.
+// cx/cy = centre of arcs (dot position, near bottom of icon).
+// TFT_eSPI drawArc convention: 0°=bottom(6 o'clock), 90°=left, 180°=top, 270°=right.
+// 135°→225° draws the upper fan (upper-left → top → upper-right) for a WiFi icon
+// with the dot at the bottom.
+static void drawWifiIcon(TFT_eSprite& spr, int cx, int cy, uint16_t color, uint16_t bg) {
+    spr.fillCircle(cx, cy, 1, color);
+    spr.drawArc(cx, cy,  4,  2, 135, 225, color, bg);
+    spr.drawArc(cx, cy,  7,  5, 135, 225, color, bg);
+    spr.drawArc(cx, cy, 10,  8, 135, 225, color, bg);
+}
+
 // Draw full-screen AP list. apCount entries from apSsids[]/apRssi[].
 // Rows numbered 1–apCount starting at y=AP_ROW_H (row 0 = header).
 void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
@@ -448,7 +470,8 @@ void drawInputBar() {
             spr.drawString("> ", 2, 0);
             int promptW = spr.textWidth("> ");
             spr.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
-            int availW = SCREEN_W - promptW - 4;
+            const int iconW = 18;  // WiFi icon reserved width at right
+            int availW = SCREEN_W - promptW - 4 - iconW;
             // Scroll so cursor is always visible
             int start = inputCursor;
             while (start > 0) {
@@ -467,6 +490,8 @@ void drawInputBar() {
             strncpy(preCur, inputBuf + start, inputCursor - start);
             int curX = 2 + promptW + spr.textWidth(preCur);
             spr.fillRect(curX, 2, 2, lineH - 4, invertDisplay ? TFT_BLACK : TFT_WHITE);
+            // WiFi signal icon at bottom right
+            drawWifiIcon(spr, SCREEN_W - iconW / 2, lineH - 2, rssiColor(), bg);
             FONT_UNLOAD(spr);
             spr.pushSprite(0, inputY);
             spr.deleteSprite();
@@ -478,7 +503,7 @@ void drawInputBar() {
             tft.drawString("> ", 2, inputY);
             int promptW = tft.textWidth("> ");
             tft.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
-            int maxChars = (SCREEN_W - (int)promptW - 4) / TXT_W;
+            int maxChars = (SCREEN_W - (int)promptW - 4 - 18) / TXT_W;  // 18px reserved for WiFi icon
             int start = (inputCursor > maxChars) ? inputCursor - maxChars : 0;
             char dispBuf[INPUT_BUF_SIZE] = {0};
             strncpy(dispBuf, inputBuf + start, inputLen - start);
@@ -2129,6 +2154,21 @@ void checkWiFiHealth() {
         WiFi.disconnect(false);
         WiFi.begin(wifiSsid[0], wifiPass[0]);
     }
+
+#ifdef TARGET_C3
+    // Refresh WiFi signal icon every 2s; only redraw when the colour bucket changes.
+    // Safe: loop() is blocked during API calls so this never races with streaming draws.
+    static unsigned long lastRssiDrawMs = 0;
+    static uint16_t      lastRssiColor  = 0xFFFF;  // impossible sentinel
+    if (millis() - lastRssiDrawMs >= 2000) {
+        lastRssiDrawMs = millis();
+        uint16_t col = rssiColor();
+        if (col != lastRssiColor) {
+            lastRssiColor = col;
+            drawInputBar();
+        }
+    }
+#endif
 }
 
 void loop() {
@@ -2206,6 +2246,14 @@ do_new_conv:
                     drawInputBar();
                 }
                 break;
+            case INPUT_DELETE:
+                if (inputCursor < inputLen) {
+                    memmove(inputBuf + inputCursor, inputBuf + inputCursor + 1, inputLen - inputCursor);
+                    inputLen--;
+                    if (inputLen == 0 && historyCount > 0) moreMode = true;
+                    drawInputBar();
+                }
+                break;
             case INPUT_CHAR:
                 if (ev.ch != 0 && inputLen < INPUT_MAX_LEN) {
                     moreMode = false;
@@ -2220,6 +2268,12 @@ do_new_conv:
                 break;
             case INPUT_CURSOR_RIGHT:
                 if (inputCursor < inputLen) { inputCursor++; drawInputBar(); }
+                break;
+            case INPUT_MODEL_MENU:
+                selectModel();
+                rebuildLines();
+                drawHistory();
+                drawInputBar();
                 break;
             default:
                 break;

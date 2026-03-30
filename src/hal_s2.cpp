@@ -7,6 +7,8 @@
 // 290326 LED: replace NeoPixel with simple GPIO (active-high)
 // 290326 SPI: use GPIO 34/35/36/37 (native FSPI pins on right header); MISO must be real pin
 // 290326 USB host: require ARDUINO_USB_CDC_ON_BOOT=0 to free OTG peripheral from CDC
+// 280326 USB host: send SET_PROTOCOL(Boot) + SET_IDLE(0) for wireless dongle compatibility
+// 280326 Key mappings: PgUp=scroll newer, PgDn=scroll older, Home=model menu, Del=no-op
 #ifdef TARGET_S2
 
 #include "hal.h"
@@ -27,6 +29,14 @@ extern TFT_eSPI tft;
 void halSetLed(uint8_t r, uint8_t g, uint8_t b) {
     // Single-colour LED: on if any channel non-zero
     digitalWrite(LED_PIN, (r || g || b) ? HIGH : LOW);
+}
+
+// ── Screen debug helper (used by USB tasks) ───────────────────────────────────
+static void dbgLine(int row, const char* msg) {
+    tft.fillRect(0, row * 16, tft.width(), 16, TFT_BLACK);
+    tft.setTextFont(1);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString(msg, 2, row * 16 + 2);
 }
 
 // ── Ring buffer ───────────────────────────────────────────────────────────────
@@ -54,10 +64,10 @@ bool halPollInput(InputEvent* ev) {
 #ifndef S2_DUMMY_INPUT
 // ── HID scan code → ASCII ─────────────────────────────────────────────────────
 // Identical to hal_c3.cpp — pure table lookup, no BLE dependency.
-static char hidToAscii(uint8_t code, bool shifted) {
+static char hidToAscii(uint8_t code, bool shifted, bool capsLock) {
     if (code >= 0x04 && code <= 0x1D) {
         char c = 'a' + (code - 0x04);
-        return shifted ? (c - 32) : c;
+        return (shifted ^ capsLock) ? (c - 32) : c;  // caps lock inverts shift for letters only
     }
     if (code >= 0x1E && code <= 0x27) {
         static const char num[]   = "1234567890";
@@ -84,15 +94,35 @@ static char hidToAscii(uint8_t code, bool shifted) {
 // ── HID report parser ─────────────────────────────────────────────────────────
 // Standard USB HID boot-protocol keyboard report: 8 bytes.
 // byte 0: modifier mask  byte 1: reserved  bytes 2-7: up to 6 keycodes
+// After SET_PROTOCOL(Boot), both wired and wireless keyboards use this format.
+// Some wireless dongles ignore SET_PROTOCOL and still prefix with a report ID byte.
+// Detect: if byte 0 is 1–4 (report ID) AND byte 2 is 0x00 (boot-protocol reserved),
+// skip the report ID. Boot-protocol modifier 0x01–0x04 has keycode at byte 2 (non-zero
+// on keypress), so data[2]==0x00 safely distinguishes the two cases.
+// Last keycodes seen — used for software key-repeat suppression.
+// Some devices ignore SET_IDLE(0) and keep sending the same report while a key is held.
+static uint8_t s_lastKeycodes[6] = {};
+static bool    s_capsLock        = false;
+
 static void parseHidReport(const uint8_t* data, size_t len) {
-    if (len < 2) return;
+    if (len < 3) return;
+    if (len >= 4 && data[0] >= 1 && data[0] <= 4 && data[2] == 0x00) { data++; len--; }
     uint8_t modifier = data[0];
     bool ctrl    = (modifier & 0x11) != 0;   // 0x01=LCtrl, 0x10=RCtrl
     bool shifted = (modifier & 0x22) != 0;   // 0x02=LShift, 0x20=RShift
 
     bool allZero = true;
     for (size_t i = 2; i < len && i < 8; i++) if (data[i]) { allZero = false; break; }
-    if (allZero) return;  // key-up report — ignore
+    if (allZero) {
+        memset(s_lastKeycodes, 0, sizeof(s_lastKeycodes));
+        return;  // key-up — reset repeat guard
+    }
+
+    // Suppress key-repeat: ignore if keycodes unchanged since last report
+    uint8_t keycodes[6] = {};
+    for (size_t i = 2, k = 0; i < len && i < 8 && k < 6; i++, k++) keycodes[k] = data[i];
+    if (memcmp(keycodes, s_lastKeycodes, 6) == 0) return;
+    memcpy(s_lastKeycodes, keycodes, 6);
 
     for (size_t i = 2; i < len && i < 8; i++) {
         uint8_t code = data[i];
@@ -102,12 +132,17 @@ static void parseHidReport(const uint8_t* data, size_t len) {
         else if (ctrl && code == 0x10) ev.type = INPUT_MORE;        // Ctrl+M
         else if (code == 0x52)         ev.type = INPUT_SCROLL_DOWN; // ↑ = newer
         else if (code == 0x51)         ev.type = INPUT_SCROLL_UP;   // ↓ = older
+        else if (code == 0x4B)         ev.type = INPUT_SCROLL_DOWN; // PgUp = newer (same as ↑)
+        else if (code == 0x4E)         ev.type = INPUT_SCROLL_UP;   // PgDn = older (same as ↓)
+        else if (code == 0x4A)         ev.type = INPUT_MODEL_MENU;  // Home → model menu
+        else if (code == 0x4C)         ev.type = INPUT_DELETE;      // Del → forward-delete
+        else if (code == 0x39)         { s_capsLock = !s_capsLock; }
         else if (code == 0x50)         ev.type = INPUT_CURSOR_LEFT;
         else if (code == 0x4F)         ev.type = INPUT_CURSOR_RIGHT;
         else if (code == 0x28)         ev.type = INPUT_ENTER;
         else if (code == 0x2A)         ev.type = INPUT_BACKSPACE;
         else {
-            char c = hidToAscii(code, shifted);
+            char c = hidToAscii(code, shifted, s_capsLock);
             if (c) { ev.type = INPUT_CHAR; ev.ch = c; }
         }
         if (ev.type != INPUT_NONE) rb_push(ev);
@@ -131,7 +166,7 @@ static void transferCb(usb_transfer_t* xfer) {
     if (xfer->status == USB_TRANSFER_STATUS_COMPLETED && xfer->actual_num_bytes > 0)
         parseHidReport(xfer->data_buffer, xfer->actual_num_bytes);
     if (s_devOpen && xfer->status == USB_TRANSFER_STATUS_COMPLETED)
-        usb_host_transfer_submit(xfer);  // resubmit for next interrupt report
+        usb_host_transfer_submit(xfer);
 }
 
 static void clientEventCb(const usb_host_client_event_msg_t* msg, void*) {
@@ -163,7 +198,8 @@ static bool findHidEndpoint(usb_device_handle_t dev,
 
         if (dType == 0x04) {  // USB_B_DESCRIPTOR_TYPE_INTERFACE
             const usb_intf_desc_t* intf = (const usb_intf_desc_t*)(p + offset);
-            inHid = (intf->bInterfaceClass == 0x03);  // HID class
+            // Accept HID class but skip mouse (protocol 2) — prefer keyboard (protocol 1 or 0)
+            inHid = (intf->bInterfaceClass == 0x03 && intf->bInterfaceProtocol != 2);
             if (inHid) *ifNum = intf->bInterfaceNumber;
         } else if (dType == 0x05 && inHid) {  // USB_B_DESCRIPTOR_TYPE_ENDPOINT
             const usb_ep_desc_t* ep = (const usb_ep_desc_t*)(p + offset);
@@ -180,27 +216,112 @@ static bool findHidEndpoint(usb_device_handle_t dev,
     return false;
 }
 
+
 static void openDevice(uint8_t addr) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "openDev addr=%d", addr);
+    dbgLine(0, buf);
+
     if (usb_host_device_open(s_client, addr, &s_dev) != ESP_OK) {
-        Serial.println("[USB] device_open failed");
+        dbgLine(1, "FAIL: device_open");
         return;
     }
     uint8_t  epAddr = 0;
     uint16_t maxPkt = 8;
     if (!findHidEndpoint(s_dev, &epAddr, &maxPkt, &s_ifaceNum)) {
-        Serial.println("[USB] no HID interrupt-IN endpoint — not a keyboard?");
+        dbgLine(1, "FAIL: no HID ep");
         usb_host_device_close(s_client, s_dev);
         s_dev = nullptr;
         return;
     }
+    snprintf(buf, sizeof(buf), "ep=%02X pkt=%d if=%d", epAddr, maxPkt, s_ifaceNum);
+    dbgLine(1, buf);
+
     if (usb_host_interface_claim(s_client, s_dev, s_ifaceNum, 0) != ESP_OK) {
-        Serial.println("[USB] interface_claim failed");
+        dbgLine(2, "FAIL: iface_claim");
         usb_host_device_close(s_client, s_dev);
         s_dev = nullptr;
         return;
     }
+
+    // ── Force Boot Protocol ──────────────────────────────────────────────────
+    // Wireless dongles default to Report Protocol with report IDs, which has a
+    // variable report format.  SET_PROTOCOL(Boot) forces the standard 8-byte
+    // keyboard format (modifier, reserved, 6 keycodes) with no report ID.
+    // This is essential for wireless keyboard dongles to work.
+    {
+        usb_transfer_t* ctrl = nullptr;
+        // Control transfer needs 8 bytes for setup packet + wLength data (0 for SET_PROTOCOL)
+        if (usb_host_transfer_alloc(8 + 0, 0, &ctrl) == ESP_OK) {
+            // SET_PROTOCOL: bmRequestType=0x21 (Host-to-device, Class, Interface)
+            //               bRequest=0x0B (SET_PROTOCOL)
+            //               wValue=0x0000 (0 = Boot Protocol)
+            //               wIndex=interface number
+            //               wLength=0
+            ctrl->data_buffer[0] = 0x21;  // bmRequestType
+            ctrl->data_buffer[1] = 0x0B;  // bRequest: SET_PROTOCOL
+            ctrl->data_buffer[2] = 0x00;  // wValue low: 0 = Boot Protocol
+            ctrl->data_buffer[3] = 0x00;  // wValue high
+            ctrl->data_buffer[4] = s_ifaceNum;  // wIndex low
+            ctrl->data_buffer[5] = 0x00;  // wIndex high
+            ctrl->data_buffer[6] = 0x00;  // wLength low
+            ctrl->data_buffer[7] = 0x00;  // wLength high
+            ctrl->num_bytes       = 8;    // setup packet only, no data stage
+            ctrl->device_handle   = s_dev;
+            ctrl->bEndpointAddress = 0x00;  // EP0
+            ctrl->timeout_ms      = 1000;
+            // Synchronous-ish: use a simple callback that signals a semaphore
+            static SemaphoreHandle_t ctrlDone = xSemaphoreCreateBinary();
+            ctrl->callback = [](usb_transfer_t* t) { xSemaphoreGive((SemaphoreHandle_t)t->context); };
+            ctrl->context  = (void*)ctrlDone;
+            esp_err_t err = usb_host_transfer_submit_control(s_client, ctrl);
+            if (err == ESP_OK) {
+                xSemaphoreTake(ctrlDone, pdMS_TO_TICKS(1000));
+                if (ctrl->status == USB_TRANSFER_STATUS_COMPLETED) {
+                    dbgLine(2, "SET_PROTOCOL(Boot) OK");
+                } else {
+                    char sb[40];
+                    snprintf(sb, sizeof(sb), "SET_PROTOCOL st=%d", ctrl->status);
+                    dbgLine(2, sb);
+                }
+            } else {
+                char sb[40];
+                snprintf(sb, sizeof(sb), "SET_PROTOCOL err=%x", err);
+                dbgLine(2, sb);
+            }
+            usb_host_transfer_free(ctrl);
+        }
+    }
+
+    // ── SET_IDLE(0) — suppress repeated reports while key is held ────────────
+    {
+        usb_transfer_t* ctrl = nullptr;
+        if (usb_host_transfer_alloc(8, 0, &ctrl) == ESP_OK) {
+            ctrl->data_buffer[0] = 0x21;  // bmRequestType
+            ctrl->data_buffer[1] = 0x0A;  // bRequest: SET_IDLE
+            ctrl->data_buffer[2] = 0x00;  // wValue low: duration 0 = indefinite
+            ctrl->data_buffer[3] = 0x00;  // wValue high: report ID 0 = all
+            ctrl->data_buffer[4] = s_ifaceNum;
+            ctrl->data_buffer[5] = 0x00;
+            ctrl->data_buffer[6] = 0x00;
+            ctrl->data_buffer[7] = 0x00;
+            ctrl->num_bytes       = 8;
+            ctrl->device_handle   = s_dev;
+            ctrl->bEndpointAddress = 0x00;
+            ctrl->timeout_ms      = 1000;
+            static SemaphoreHandle_t idleDone = xSemaphoreCreateBinary();
+            ctrl->callback = [](usb_transfer_t* t) { xSemaphoreGive((SemaphoreHandle_t)t->context); };
+            ctrl->context  = (void*)idleDone;
+            if (usb_host_transfer_submit_control(s_client, ctrl) == ESP_OK) {
+                xSemaphoreTake(idleDone, pdMS_TO_TICKS(1000));
+                // SET_IDLE may STALL on some devices — that's OK, not fatal
+            }
+            usb_host_transfer_free(ctrl);
+        }
+    }
+
     if (usb_host_transfer_alloc(maxPkt, 0, &s_xfer) != ESP_OK) {
-        Serial.println("[USB] transfer_alloc failed");
+        dbgLine(2, "FAIL: xfer_alloc");
         usb_host_interface_release(s_client, s_dev, s_ifaceNum);
         usb_host_device_close(s_client, s_dev);
         s_dev = nullptr;
@@ -214,8 +335,7 @@ static void openDevice(uint8_t addr) {
     s_xfer->timeout_ms       = 0;  // interrupt: fire when data arrives
     s_devOpen = true;
     usb_host_transfer_submit(s_xfer);
-    Serial.printf("[USB] keyboard open: iface=%d ep=0x%02x maxPkt=%d\n",
-                  s_ifaceNum, epAddr, maxPkt);
+    dbgLine(2, "OK: transfer submitted");
 }
 
 static void closeDevice() {
@@ -357,6 +477,7 @@ void halInit() {
     }
 
     if (!s_devOpen) bootRow(1, "Connect keyboard");
+    vTaskDelay(pdMS_TO_TICKS(2000));  // DEBUG: hold boot diagnostics on screen
 #endif
 
     // Clear boot rows before returning to main
