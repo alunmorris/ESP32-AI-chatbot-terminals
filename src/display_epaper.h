@@ -177,6 +177,8 @@ public:
     void     setTextDatum(uint8_t)                               {}
     void     fillSprite(uint16_t)                                {}
     void     fillRect(int32_t, int32_t, int32_t, int32_t, uint16_t) {}
+    void     fillCircle(int32_t, int32_t, int32_t, uint16_t)        {}
+    void     drawArc(int32_t, int32_t, int32_t, int32_t, float, float, uint16_t, uint16_t) {}
     void     setTextColor(uint16_t, uint16_t)                    {}
     void     drawString(const char*, int32_t, int32_t)           {}
     int32_t  textWidth(const char*)                              { return 0; }
