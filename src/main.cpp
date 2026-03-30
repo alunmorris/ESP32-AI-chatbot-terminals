@@ -681,6 +681,74 @@ void drawHistory() {
     int firstIdx = lineCount - histSlots - scrollOffset;
     if (firstIdx < 0) firstIdx = 0;
 
+#ifdef TARGET_EPAPER
+    // E-paper full-screen render: wrap everything in firstPage/nextPage frame.
+    tft.beginFrame();
+    tft.epd.fillScreen(GxEPD_WHITE);
+    tft.u8g2.setFont(EPD_FONT);
+    tft.u8g2.setForegroundColor(GxEPD_BLACK);
+    tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+
+    // Slot 0: model name heading
+    const char* modelLabel = useGrok ? "Grok 4.1 Fast" :
+                             useGroq ? "Groq OSS-120b" : GEMINI_MODEL;
+    tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+    tft.u8g2.print(modelLabel);
+
+    // Divider below heading
+    tft.epd.drawLine(0, lineH - 1, SCREEN_W, lineH - 1, GxEPD_BLACK);
+
+    // Chat lines (slots 1..histSlots)
+    for (int i = 0; i < histSlots; i++) {
+        if ((firstIdx + i) < lineCount) {
+            int idx = firstIdx + i;
+            int y   = (i + 1) * lineH;
+            if (lineIsUser[idx]) {
+                // Right-align user messages
+                int32_t w = tft.textWidth(lines[idx]);
+                tft.u8g2.setCursor(SCREEN_W - (int)w - 2, y + EPD_FONT_ASCENT);
+            } else {
+                tft.u8g2.setCursor(2, y + EPD_FONT_ASCENT);
+            }
+            tft.u8g2.print(lines[idx]);
+        }
+    }
+
+    // Divider above input line
+    int inputY = (maxVis - 1) * lineH;
+    tft.epd.drawLine(0, inputY - 1, SCREEN_W, inputY - 1, GxEPD_BLACK);
+
+    // Input line (last slot)
+    {
+        tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
+        tft.u8g2.print("> ");
+        int32_t promptW = tft.textWidth("> ");
+        // Scroll so cursor stays visible
+        int start = inputCursor;
+        int availW = SCREEN_W - (int)promptW - 4;
+        while (start > 0) {
+            char tmp[INPUT_BUF_SIZE];
+            int len = inputCursor - (start - 1);
+            strncpy(tmp, inputBuf + start - 1, len);
+            tmp[len] = '\0';
+            if ((int)tft.textWidth(tmp) > availW - 2) break;
+            start--;
+        }
+        char dispBuf[INPUT_BUF_SIZE] = {0};
+        strncpy(dispBuf, inputBuf + start, inputLen - start);
+        tft.u8g2.setCursor(2 + (int)promptW, inputY + EPD_FONT_ASCENT);
+        tft.u8g2.print(dispBuf);
+        // Cursor: thin vertical line at insertion point
+        char preCur[INPUT_BUF_SIZE] = {0};
+        strncpy(preCur, inputBuf + start, inputCursor - start);
+        int curX = 2 + (int)promptW + (int)tft.textWidth(preCur);
+        tft.epd.drawLine(curX, inputY + 1, curX, inputY + lineH - 2, GxEPD_BLACK);
+    }
+
+    tft.endFrame();
+    return;
+#endif
+
 #ifdef TARGET_C3
     // Render each line to a RAM sprite, then push to display in one SPI block.
     // This avoids repeated setWindow/pushBlock transitions that cause partial
