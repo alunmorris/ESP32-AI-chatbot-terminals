@@ -491,7 +491,7 @@ void drawInputBar() {
             char preCur[INPUT_BUF_SIZE] = {0};
             strncpy(preCur, inputBuf + start, inputCursor - start);
             int curX = 2 + promptW + spr.textWidth(preCur);
-            spr.fillRect(curX, 2, 2, lineH - 4, invertDisplay ? TFT_BLACK : TFT_WHITE);
+            spr.fillRect(curX, 2, 1, lineH - 4, invertDisplay ? TFT_DARKGREY : TFT_YELLOW);
             // WiFi signal icon at bottom right
             drawWifiIcon(spr, SCREEN_W - iconW / 2, lineH - 2, rssiColor(), bg);
             FONT_UNLOAD(spr);
@@ -739,7 +739,7 @@ void drawHistory() {
             char preCur[INPUT_BUF_SIZE] = {0};
             strncpy(preCur, inputBuf + start, inputCursor - start);
             int curX = 2 + promptW + spr.textWidth(preCur);
-            spr.fillRect(curX, 2, 2, lineH - 4, invertDisplay ? TFT_BLACK : TFT_WHITE);
+            spr.fillRect(curX, 2, 1, lineH - 4, invertDisplay ? TFT_DARKGREY : TFT_YELLOW);
             spr.pushSprite(0, (maxVis - 1) * lineH);  // last slot, after heading + histSlots chat lines
         }
 
