@@ -2257,7 +2257,13 @@ void setup() {
     waitMsgIdx = random(NUM_WAIT_MSGS);
     // Display (init before backlight to avoid white flash)
     tft.init();
-#ifdef TARGET_P3
+#ifdef TARGET_EPAPER
+    tft.setRotation(1);  // landscape (250 wide × 122 tall)
+    // Initial full-screen white clear — required before any partial updates
+    tft.beginFrame();
+    tft.epd.fillScreen(GxEPD_WHITE);
+    tft.endFrame();
+#elif defined(TARGET_P3)
     // ST7789P3 284×76 native landscape
     tft.setRotation(0);
 #if defined(TFT_BL) && (TFT_BL >= 0)
@@ -2280,7 +2286,9 @@ void setup() {
         tft.setRotation(1);
     #endif
 #endif
+#ifndef TARGET_EPAPER
     tft.fillScreen(invertDisplay ? COL_INVERT_BG : COL_BG);
+#endif
 
     // Hardware init (backlight, touch, LED, speaker) — delegated to HAL
     halInit();
@@ -2288,18 +2296,24 @@ void setup() {
 
     // Boot splash — plain background while connecting
     unsigned long splashStart = millis();
+#ifndef TARGET_EPAPER
     tft.fillScreen(TFT_WHITE);
+#endif
     bool wifiOk = connectWiFi(wifiSsid[0], wifiPass[0], true);
     // Splash visible for at least 3 seconds
     long splashRemain = 3000L - (long)(millis() - splashStart);
     if (splashRemain > 0) delay(splashRemain);
+#ifndef TARGET_EPAPER
     tft.fillScreen(invertDisplay ? COL_INVERT_BG : COL_BG);  // clear splash
+#endif
 
     if (!wifiOk) {
         selectAP();  // scan → pick AP → enter password → connect; returns only on success
     }
 
+#ifndef TARGET_EPAPER
     tft.fillScreen(invertDisplay ? COL_INVERT_BG : COL_BG);  // clear AP/splash UI before drawing model menu
+#endif
 
 #ifndef TARGET_C3
     drawKeyboard();
