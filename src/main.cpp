@@ -66,6 +66,10 @@ bool        useGroq           = false;  // true → route to Groq instead of Gem
 // Font selected via FONT_18PX in font.h; FONT_DATA / FONT_LINE_H etc. set there.
 bool        invertDisplay     = true;   // true = Light Theme (light bg, black text)
 #define COL_INVERT_BG   0xC618          // light grey (~RGB 192,192,192)
+#ifdef TARGET_EPAPER
+#  undef  COL_INVERT_BG
+#  define COL_INVERT_BG  0xFFFF   // true white for e-paper (0xC618 maps to black via mapCol)
+#endif
 
 // --- WiFi credential store (NVS, up to 9 slots, slot 0 = most-recently-used) ---
 #define WIFI_PREFS_MAX  9
@@ -155,6 +159,9 @@ void clearWifiPass(const char* ssid) {
 #ifdef TARGET_P3
 #  define SCREEN_W      284   // ST7789P3 display module (part no.), 284×76 landscape, ESP32-C3
 #  define SCREEN_H       76
+#elif defined(TARGET_EPAPER)
+#  define SCREEN_W      250   // GDEY0213B74 250×122 landscape
+#  define SCREEN_H      122
 #else
 #  define SCREEN_W      320
 #  define SCREEN_H      240
