@@ -8,7 +8,8 @@
 // 290326 SPI: use GPIO 34/35/36/37 (native FSPI pins on right header); MISO must be real pin
 // 290326 USB host: require ARDUINO_USB_CDC_ON_BOOT=0 to free OTG peripheral from CDC
 // 280326 USB host: send SET_PROTOCOL(Boot) + SET_IDLE(0) for wireless dongle compatibility
-// 280326 Key mappings: PgUp=scroll newer, PgDn=scroll older, Home=model menu, Del=no-op
+// 300326 Key mappings: PgUp=scroll newer, PgDn=scroll older, Home=model menu, Del=forward-delete
+// 300326 Caps Lock: toggles s_capsLock; inverts shift for letters only
 #ifdef TARGET_S2
 
 #include "hal.h"

@@ -1,4 +1,6 @@
 // Cheap AI Chat Keyboard — ESP32-C3 + CYD28 + ESP32-S2 Mini
+// 300326 WiFi signal icon (dot + 3 arcs) bottom-right of C3/S2 input bar; refreshes every 2s
+// 300326 INPUT_DELETE (Del=forward-delete) and INPUT_MODEL_MENU (Home=model menu) added
 // 290326 Add ESP32-S2 Mini target (env:s2mini): USB HID keyboard via USB-C OTG, GPIO LED
 // 240326 Cursor movement: left/right arrows move insertion point; insert/delete at cursor
 // 240326 Gemini request: PrintBuffer flushes serializeJson in 1KB chunks (fixes TLS write failure)
