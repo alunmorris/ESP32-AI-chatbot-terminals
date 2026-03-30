@@ -475,6 +475,42 @@ void drawInputBar() {
     // On C3 the input prompt is the last line of the chat area (no separate bar).
     // drawHistory() renders it as part of the history display; this function
     // redraws just that last slot when only the input text changes.
+#ifdef TARGET_EPAPER
+        {
+            // Partial frame refresh: only the input row is updated (500 ms vs 1700 ms full).
+            int lineH  = LINE_H_LARGE;
+            int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;
+            tft.beginPartialFrame(0, inputY, SCREEN_W, lineH);
+            tft.epd.fillRect(0, inputY, SCREEN_W, lineH, GxEPD_WHITE);
+            tft.u8g2.setFont(EPD_FONT);
+            tft.u8g2.setForegroundColor(GxEPD_BLACK);
+            tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+            tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
+            tft.u8g2.print("> ");
+            int32_t promptW = tft.textWidth("> ");
+            int start = inputCursor;
+            int availW = SCREEN_W - (int)promptW - 4;
+            while (start > 0) {
+                char tmp[INPUT_BUF_SIZE];
+                int len = inputCursor - (start - 1);
+                strncpy(tmp, inputBuf + start - 1, len);
+                tmp[len] = '\0';
+                if ((int)tft.textWidth(tmp) > availW - 2) break;
+                start--;
+            }
+            char dispBuf[INPUT_BUF_SIZE] = {0};
+            strncpy(dispBuf, inputBuf + start, inputLen - start);
+            tft.u8g2.setCursor(2 + (int)promptW, inputY + EPD_FONT_ASCENT);
+            tft.u8g2.print(dispBuf);
+            // Cursor line
+            char preCur[INPUT_BUF_SIZE] = {0};
+            strncpy(preCur, inputBuf + start, inputCursor - start);
+            int curX = 2 + (int)promptW + (int)tft.textWidth(preCur);
+            tft.epd.drawLine(curX, inputY + 1, curX, inputY + lineH - 2, GxEPD_BLACK);
+            tft.endFrame();
+            return;
+        }
+#endif
     {
         int lineH  = LINE_H_LARGE;
         int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;
