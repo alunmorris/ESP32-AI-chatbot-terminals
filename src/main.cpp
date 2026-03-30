@@ -427,6 +427,25 @@ static void drawWifiIcon(TFT_eSprite& spr, int cx, int cy, uint16_t color, uint1
 // Draw full-screen AP list. apCount entries from apSsids[]/apRssi[].
 // Rows numbered 1–apCount starting at y=AP_ROW_H (row 0 = header).
 void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
+#ifdef TARGET_EPAPER
+    // Compact AP list for 250×122. Header row + up to 8 APs at 12 px each.
+    tft.beginFrame();
+    tft.epd.fillScreen(GxEPD_WHITE);
+    tft.u8g2.setFont(EPD_FONT);
+    tft.u8g2.setForegroundColor(GxEPD_BLACK);
+    tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+    tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+    tft.u8g2.print("Select WiFi network:");
+    int maxAPs = min(apCount, 8);   // 8 × 12 px + 12 px header = 108 px < 122 px
+    for (int i = 0; i < maxAPs; i++) {
+        char line[64];
+        snprintf(line, sizeof(line), "%d %s %s", i + 1, apSsids[i], rssiToBars(apRssi[i]));
+        tft.u8g2.setCursor(2, (i + 1) * FONT_LINE_H + EPD_FONT_ASCENT);
+        tft.u8g2.print(line);
+    }
+    tft.endFrame();
+    return;
+#endif
     uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
     uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
     tft.fillScreen(bg);
