@@ -1019,6 +1019,20 @@ void enterPassword(const char* ssidPrompt, char* out) {
 
 #ifdef TARGET_C3
     {
+#ifdef TARGET_EPAPER
+        {
+            tft.beginFrame();
+            tft.epd.fillScreen(GxEPD_WHITE);
+            tft.u8g2.setFont(EPD_FONT);
+            tft.u8g2.setForegroundColor(GxEPD_BLACK);
+            tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+            tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+            tft.u8g2.print("Password for:");
+            tft.u8g2.setCursor(2, FONT_LINE_H + EPD_FONT_ASCENT);
+            tft.u8g2.print(ssidPrompt);
+            tft.endFrame();
+        }
+#else
         // Use sprite rendering for all rows — fillRect is unreliable on C3 for large areas
         // (per-glyph setWindow/pushBlock SPI glitches leave stale pixels from the AP scan).
         // Reuse one line-height sprite: draw header lines, then fill blank rows to the bottom.
@@ -1047,6 +1061,7 @@ void enterPassword(const char* ssidPrompt, char* out) {
                 spr.pushSprite(0, y);
             spr.deleteSprite();
         }
+#endif
     }
 #else
     {
