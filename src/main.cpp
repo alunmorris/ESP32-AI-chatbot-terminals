@@ -1179,19 +1179,43 @@ void selectAP() {
         // --- Scan ---
         WiFi.disconnect(true);  // ensure clean idle state before scan (prev. begin() may leave driver busy)
         {
+#ifdef TARGET_EPAPER
+            tft.beginFrame();
+            tft.epd.fillScreen(GxEPD_WHITE);
+            tft.u8g2.setFont(EPD_FONT);
+            tft.u8g2.setForegroundColor(GxEPD_BLACK);
+            tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+            tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+            tft.u8g2.print("Scanning WiFi...");
+            tft.endFrame();
+#else
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillScreen(bg);
             fontOff(); uiFontOn(); tft.setTextColor(invertDisplay ? TFT_BLACK : TFT_YELLOW, bg);
             tft.drawString("Scanning WiFi...", 2, 0);
+#endif
         }
 
         int n = WiFi.scanNetworks();
 
         if (n <= 0) {
+#ifdef TARGET_EPAPER
+            tft.beginFrame();
+            tft.epd.fillScreen(GxEPD_WHITE);
+            tft.u8g2.setFont(EPD_FONT);
+            tft.u8g2.setForegroundColor(GxEPD_BLACK);
+            tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+            tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+            tft.u8g2.print("No networks found.");
+            tft.u8g2.setCursor(2, FONT_LINE_H + EPD_FONT_ASCENT);
+            tft.u8g2.print("Press any key to retry.");
+            tft.endFrame();
+#else
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillScreen(bg);
             tft.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
             tft.drawString("No networks found. Tap to retry.", 2, 0);
+#endif
             { InputEvent ev; while (!halPollInput(&ev)) delay(10); }
             continue;
         }
@@ -1244,12 +1268,27 @@ void selectAP() {
             }
 
             // Show connecting
+#ifdef TARGET_EPAPER
+            {
+                char msg[64];
+                snprintf(msg, sizeof(msg), "Connecting: %.44s", selSsid);
+                tft.beginFrame();
+                tft.epd.fillScreen(GxEPD_WHITE);
+                tft.u8g2.setFont(EPD_FONT);
+                tft.u8g2.setForegroundColor(GxEPD_BLACK);
+                tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+                tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+                tft.u8g2.print(msg);
+                tft.endFrame();
+            }
+#else
             uint16_t conBg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillScreen(conBg);
             uiFontOn(); tft.setTextColor(TFT_BLUE, conBg);
             char msg[80]; snprintf(msg, sizeof(msg), "Connecting: %.55s...", selSsid);
             tft.drawString(msg, 2, 0);
             uiFontOff();
+#endif
 
             bool ok = connectWiFi(selSsid, pass);
 
@@ -1259,6 +1298,24 @@ void selectAP() {
             }
 
             // --- Failed: offer re-enter or new scan ---
+#ifdef TARGET_EPAPER
+            {
+                char failMsg[64];
+                snprintf(failMsg, sizeof(failMsg), "Failed: %.40s", selSsid);
+                tft.beginFrame();
+                tft.epd.fillScreen(GxEPD_WHITE);
+                tft.u8g2.setFont(EPD_FONT);
+                tft.u8g2.setForegroundColor(GxEPD_BLACK);
+                tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+                tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+                tft.u8g2.print(failMsg);
+                tft.u8g2.setCursor(2, FONT_LINE_H + EPD_FONT_ASCENT);
+                tft.u8g2.print("1  Re-enter password");
+                tft.u8g2.setCursor(2, 2 * FONT_LINE_H + EPD_FONT_ASCENT);
+                tft.u8g2.print("2  New scan");
+                tft.endFrame();
+            }
+#else
             uint16_t failBg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillScreen(failBg);
             uiFontOn();
@@ -1275,6 +1332,7 @@ void selectAP() {
                 tft.drawString(opts[i], 2, y + (AP_ROW_H - TXT_H) / 2);
             }
             uiFontOff();
+#endif
 
             // Wait for key 1 or 2
             int choice = 0;
