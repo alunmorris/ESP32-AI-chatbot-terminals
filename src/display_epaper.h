@@ -32,6 +32,21 @@
 #  define TR_DATUM 2
 #endif
 
+// RGB565 colour constants — mirrors TFT_eSPI so main.cpp compiles without it
+#ifndef TFT_BLACK
+#  define TFT_BLACK       0x0000
+#  define TFT_DARKGREY    0x7BEF
+#  define TFT_BLUE        0x001F
+#  define TFT_GREEN       0x07E0
+#  define TFT_CYAN        0x07FF
+#  define TFT_RED         0xF800
+#  define TFT_YELLOW      0xFFE0
+#  define TFT_WHITE       0xFFFF
+#  define TFT_ORANGE      0xFDA0
+#  define TFT_GREENYELLOW 0xB7E0
+#  define TFT_DARKGREEN   0x03E0
+#endif
+
 class EpaperDisplay {
 public:
     GxEPD2_BW<GxEPD2_213_GDEY0213B74, GxEPD2_213_GDEY0213B74::HEIGHT> epd;
@@ -137,7 +152,7 @@ public:
 
     // setCursor: TFT_eSPI y = top of glyph; U8g2 y = baseline → add ascent.
     void setCursor(int32_t x, int32_t y) {
-        u8g2.setCursor((u8g2_uint_t)x, (u8g2_uint_t)(y + EPD_FONT_ASCENT));
+        u8g2.setCursor((int16_t)x, (int16_t)(y + EPD_FONT_ASCENT));
     }
 
     void print(const char* s)  { u8g2.print(s); }
@@ -151,10 +166,12 @@ public:
         u8g2.setBackgroundColor(_bg);
         if (_datum == TR_DATUM)
             x -= (int32_t)u8g2.getUTF8Width(str);
-        u8g2.setCursor((u8g2_uint_t)x, (u8g2_uint_t)(y + EPD_FONT_ASCENT));
+        u8g2.setCursor((int16_t)x, (int16_t)(y + EPD_FONT_ASCENT));
         u8g2.print(str);
         _datum = TL_DATUM;  // reset after use, matching TFT_eSPI behaviour
     }
+
+    int16_t getCursorX() { return u8g2.getCursorX(); }
 
     int32_t textWidth(const char* str) {
         return (int32_t)u8g2.getUTF8Width(str);
