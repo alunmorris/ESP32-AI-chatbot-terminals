@@ -11,6 +11,7 @@
 #include <freertos/semphr.h>
 #include "display_epaper.h"
 #include "esp_coexist.h"  // coexistence preference API
+#include <esp_wifi.h>     // esp_wifi_set_ps()
 
 // External e-paper display for status during init
 extern EpaperDisplay tft;
@@ -406,10 +407,12 @@ void halBeforeApiCall() {
     if (reconnectTaskHandle) vTaskSuspend(reconnectTaskHandle);
     NimBLEDevice::getScan()->stop();
     esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
+    esp_wifi_set_ps(WIFI_PS_NONE);   // full radio power during TLS — no dropped connections
     Serial.printf("[BLE] before API: heap=%u\n", ESP.getFreeHeap());
 }
 
 void halAfterApiCall() {
+    esp_wifi_set_ps(WIFI_PS_MAX_MODEM);  // back to low-power idle
     esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
     Serial.printf("[BLE] after API: heap=%u\n", ESP.getFreeHeap());
     if (reconnectTaskHandle) vTaskResume(reconnectTaskHandle);

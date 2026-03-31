@@ -50,6 +50,7 @@
 #endif
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <esp_wifi.h>  // esp_wifi_set_ps() — WIFI_PS_MAX_MODEM / WIFI_PS_NONE
 #include <ArduinoJson.h>
 #ifndef TARGET_C3
 #include <ESP32Ping.h>
@@ -1222,9 +1223,9 @@ bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
 #ifndef TARGET_EPAPER
     if (showSplash) tft.fillRect(0, 0, SCREEN_W, LINE_H_LARGE + 2, TFT_WHITE);
 #endif
-#ifdef TARGET_C3
-    WiFi.setSleep(true);  // modem sleep: yields radio to BLE between beacons
-#endif
+    // MAX_MODEM: WiFi wakes only at DTIM beacons — lowest idle current while staying associated.
+    // WIFI_PS_NONE is restored by halBeforeApiCall() during TLS connections.
+    esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
     updateLedWifi();
     return WiFi.status() == WL_CONNECTED;
 }
@@ -2356,6 +2357,10 @@ void setup() {
     Serial.begin(115200);
 #ifdef TARGET_C3
     delay(1500);  // USB CDC needs time to enumerate before first output
+#endif
+#if defined(TARGET_C3) && !defined(TARGET_S2)
+    // 80 MHz: minimum frequency for stable WiFi+BLE radio sync; saves ~10 mA vs 160 MHz default.
+    setCpuFrequencyMhz(80);
 #endif
     Serial.println("[Boot] setup() start");
 

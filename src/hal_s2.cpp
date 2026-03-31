@@ -14,6 +14,7 @@
 
 #include "hal.h"
 #include <Arduino.h>
+#include <esp_wifi.h>  // esp_wifi_set_ps()
 #include <TFT_eSPI.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -525,7 +526,7 @@ void halClickSound()  {}
 void halLoadTouchCal() {}
 void calibrateTouch() {}
 void pollKBHide()     {}
-void halBeforeApiCall() {}
-void halAfterApiCall()  {}
+void halBeforeApiCall() { esp_wifi_set_ps(WIFI_PS_NONE); }
+void halAfterApiCall()  { esp_wifi_set_ps(WIFI_PS_MAX_MODEM); }
 
 #endif // TARGET_S2

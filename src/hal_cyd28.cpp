@@ -1,6 +1,7 @@
 // hal_cyd28.cpp — CYD28 hardware: XPT2046 touch, LEDC LED+speaker, touch calibration
 #include "hal.h"
 #include <Arduino.h>
+#include <esp_wifi.h>  // esp_wifi_set_ps()
 #include <SPI.h>
 #include <XPT2046_Touchscreen.h>
 #include <Preferences.h>
@@ -439,8 +440,8 @@ bool halPollInput(InputEvent* ev) {
 
 // pollKBHide: used during blocking API wait on CYD28 to allow KB toggle.
 // Only called under #ifndef TARGET_C3 in main.cpp.
-void halBeforeApiCall() {}
-void halAfterApiCall() {}
+void halBeforeApiCall() { esp_wifi_set_ps(WIFI_PS_NONE); }
+void halAfterApiCall()  { esp_wifi_set_ps(WIFI_PS_MAX_MODEM); }
 
 void pollKBHide() {
     if (!ts.touched()) return;
