@@ -18,9 +18,15 @@
 #define EPD_MISO  5   // dummy — prevents SPI library crash
 
 // --- Font metrics for u8g2_font_helvB08_tf ---
-#define EPD_FONT            u8g2_font_helvB08_tf
-#define EPD_FONT_ASCENT     8    // pixels above baseline for cap letters
-#define FONT_LINE_H        12    // line spacing (glyph height ~10 + 2 px leading)
+#define EPD_FONT            u8g2_font_helvB08_tf   // AI text (bold upright)
+#define EPD_FONT_USER       u8g2_font_ncenR08_tf   // user text (serif — visually distinct from AI bold)
+#define EPD_FONT_ASCENT     8    // pixels above baseline for cap letters (ascent_A = 8)
+#define FONT_LINE_H        13    // line spacing: max char height 13 (ascent 11 + descent 2), zero leading
+
+// --- Refresh rate limit ---
+// Full refresh cycles through all pixels (~1700 ms, higher voltage) and ages the panel.
+// Enforce a minimum interval between full refreshes; content-triggered refreshes bypass this.
+#define EPD_MIN_FULL_REFRESH_MS 60000UL
 #define FONT_TXT_H         10    // approximate glyph height (ascent+descent)
 #define FONT_TXT_W          7    // approximate average char width
 #define FONT_LOAD(obj)   ((void)0)   // no-op: font pre-selected in EpaperDisplay::init()

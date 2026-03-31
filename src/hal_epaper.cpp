@@ -340,7 +340,7 @@ void halInit() {
 
     if (hasBonded) {
         // Phase 1: scan for known keyboard — user taps a key to wake it and trigger advertising
-        bootRow(1, "Tap a key");
+        bootRow(1, "Tap Enter twice");
 
         setupScan();
         NimBLEScan* scan = NimBLEDevice::getScan();

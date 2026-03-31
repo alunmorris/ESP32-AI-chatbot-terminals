@@ -215,6 +215,14 @@ EpaperDisplay tft;
 TFT_eSPI tft = TFT_eSPI();
 #endif
 
+#ifdef TARGET_EPAPER
+// Set true by addMessage() or scroll handlers to bypass the EPD_MIN_FULL_REFRESH_MS rate limit.
+static bool epdMsgPending       = false;
+static bool epdPromptInInputRow = false;  // short user prompt: replace input row, no scroll
+static char epdPromptBuf[128]   = "";
+static bool epdShowModel        = false;  // show model name until first AI response
+#endif
+
 // --- Keyboard layout ---
 #ifdef TARGET_C3
 constexpr bool kbVisible = false;
@@ -439,7 +447,7 @@ void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
     int maxAPs = min(apCount, 8);   // 8 × 12 px + 12 px header = 108 px < 122 px
     for (int i = 0; i < maxAPs; i++) {
         char line[64];
-        snprintf(line, sizeof(line), "%d %s %s", i + 1, apSsids[i], rssiToBars(apRssi[i]));
+        snprintf(line, sizeof(line), "%d. %s  %s", i + 1, apSsids[i], rssiToBars(apRssi[i]));
         tft.u8g2.setCursor(2, (i + 1) * FONT_LINE_H + EPD_FONT_ASCENT);
         tft.u8g2.print(line);
     }
@@ -498,7 +506,7 @@ void drawInputBar() {
         {
             // Partial frame refresh: only the input row is updated (500 ms vs 1700 ms full).
             int lineH  = LINE_H_LARGE;
-            int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;
+            int inputY = SCREEN_H - lineH;   // 106 on 122 px display — fixed at screen bottom
             tft.beginPartialFrame(0, inputY, SCREEN_W, lineH);
             tft.epd.fillRect(0, inputY, SCREEN_W, lineH, GxEPD_WHITE);
             tft.u8g2.setFont(EPD_FONT);
@@ -730,55 +738,91 @@ void drawHistory() {
 
     // On C3: slot 0 = model heading, last slot = inline input prompt.
     int histSlots = maxVis;
-#if defined(TARGET_C3) || defined(TARGET_EPAPER)
+#ifdef TARGET_C3
     histSlots = maxVis - 2;
+#endif
+#ifdef TARGET_EPAPER
+    // No heading row. Input row fixed at screen bottom: inputY = SCREEN_H - lineH.
+    // histSlots = number of chat rows that fit above the input row.
+    const int inputY = SCREEN_H - lineH;   // 109 on 122 px display with lineH=13
+    histSlots = inputY / lineH;             // 8 rows (y=0,13,26,...,91)
 #endif
     int firstIdx = lineCount - histSlots - scrollOffset;
     if (firstIdx < 0) firstIdx = 0;
 
 #ifdef TARGET_EPAPER
-    // E-paper full-screen render: wrap everything in firstPage/nextPage frame.
-    tft.beginFrame();
-    tft.epd.fillScreen(GxEPD_WHITE);
-    tft.u8g2.setFont(EPD_FONT);
-    tft.u8g2.setForegroundColor(GxEPD_BLACK);
-    tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+    // Rate-limit full refreshes to protect the panel.
+    // Content-triggered refreshes (epdMsgPending) always go through regardless of interval.
+    static unsigned long epdLastFullMs = 0;
+    {
+        unsigned long now = millis();
+        if (!epdMsgPending && (now - epdLastFullMs < EPD_MIN_FULL_REFRESH_MS)) {
+            drawInputBar();   // partial input-row update only
+            return;
+        }
+        epdMsgPending = false;
+        epdLastFullMs = now;
+    }
 
-    // Slot 0: model name heading
-    const char* modelLabel = useGrok ? "Grok 4.1 Fast" :
-                             useGroq ? "Groq OSS-120b" : GEMINI_MODEL;
-    tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
-    tft.u8g2.print(modelLabel);
-
-    // Divider below heading
-    tft.epd.drawLine(0, lineH - 1, SCREEN_W, lineH - 1, GxEPD_BLACK);
-
-    // Chat lines (slots 1..histSlots)
-    for (int i = 0; i < histSlots; i++) {
-        if ((firstIdx + i) < lineCount) {
-            int idx = firstIdx + i;
-            int y   = (i + 1) * lineH;
+    // Helper: render one history slot. Uses EPD_FONT_USER (italic) for user lines.
+    // Also shows model name in slot 0 if it is empty and epdShowModel is set.
+    auto renderSlot = [&](int slot, int fi, int displayCount) {
+        int idx = fi + slot;
+        if (idx < displayCount) {
+            int y = slot * lineH;
             if (lineIsUser[idx]) {
-                // Right-align user messages
-                int32_t w = tft.textWidth(lines[idx]);
+                tft.u8g2.setFont(EPD_FONT_USER);
+                int32_t w = (int32_t)tft.u8g2.getUTF8Width(lines[idx]);
                 tft.u8g2.setCursor(SCREEN_W - (int)w - 2, y + EPD_FONT_ASCENT);
             } else {
+                tft.u8g2.setFont(EPD_FONT);
                 tft.u8g2.setCursor(2, y + EPD_FONT_ASCENT);
             }
             tft.u8g2.print(lines[idx]);
+        } else if (slot == 0 && epdShowModel) {
+            const char* ml = useGrok ? "Grok 4.1 Fast" : useGroq ? "Groq OSS-120b" : GEMINI_MODEL;
+            tft.u8g2.setFont(EPD_FONT);
+            int32_t w = (int32_t)tft.u8g2.getUTF8Width(ml);
+            tft.u8g2.setCursor(SCREEN_W - (int)w - 2, EPD_FONT_ASCENT);
+            tft.u8g2.print(ml);
         }
+    };
+
+    // Short user prompt: replace input row with prompt, keep existing history in place (no scroll).
+    if (epdPromptInInputRow) {
+        epdPromptInInputRow = false;
+        int displayCount = lineCount - 1;   // exclude the just-added user message
+        int fi = displayCount - histSlots;
+        if (fi < 0) fi = 0;
+
+        tft.beginFrame();
+        tft.epd.fillScreen(GxEPD_WHITE);
+        tft.u8g2.setForegroundColor(GxEPD_BLACK);
+        tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+        for (int i = 0; i < histSlots; i++) renderSlot(i, fi, displayCount);
+
+        // Prompt in input row: italic, right-aligned, no cursor line
+        tft.u8g2.setFont(EPD_FONT_USER);
+        int32_t pw = (int32_t)tft.u8g2.getUTF8Width(epdPromptBuf);
+        tft.u8g2.setCursor(SCREEN_W - (int)pw - 2, inputY + EPD_FONT_ASCENT);
+        tft.u8g2.print(epdPromptBuf);
+        tft.endFrame();
+        return;
     }
 
-    // Divider above input line
-    int inputY = (maxVis - 1) * lineH;
-    tft.epd.drawLine(0, inputY - 1, SCREEN_W, inputY - 1, GxEPD_BLACK);
+    // Normal full-screen render (AI response, scroll, model change, etc.)
+    tft.beginFrame();
+    tft.epd.fillScreen(GxEPD_WHITE);
+    tft.u8g2.setForegroundColor(GxEPD_BLACK);
+    tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+    for (int i = 0; i < histSlots; i++) renderSlot(i, firstIdx, lineCount);
 
-    // Input line (last slot)
+    // Input row
     {
+        tft.u8g2.setFont(EPD_FONT);
         tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
         tft.u8g2.print("> ");
         int32_t promptW = tft.textWidth("> ");
-        // Scroll so cursor stays visible
         int start = inputCursor;
         int availW = SCREEN_W - (int)promptW - 4;
         while (start > 0) {
@@ -793,7 +837,6 @@ void drawHistory() {
         strncpy(dispBuf, inputBuf + start, inputLen - start);
         tft.u8g2.setCursor(2 + (int)promptW, inputY + EPD_FONT_ASCENT);
         tft.u8g2.print(dispBuf);
-        // Cursor: thin vertical line at insertion point
         char preCur[INPUT_BUF_SIZE] = {0};
         strncpy(preCur, inputBuf + start, inputCursor - start);
         int curX = 2 + (int)promptW + (int)tft.textWidth(preCur);
@@ -999,7 +1042,21 @@ void addMessage(bool isUser, bool isError, const char* text) {
     }
     historyCount++;
     scrollOffset = 0;   // auto-scroll to bottom
+#ifdef TARGET_EPAPER
+    int prevLineCount = lineCount;
+#endif
     rebuildLines();
+#ifdef TARGET_EPAPER
+    epdMsgPending = true;   // bypass rate limit — new content must always render
+    if (!isUser) {
+        epdShowModel = false;   // discard model name once AI responds
+    } else if (!isError && lineCount - prevLineCount == 1) {
+        // Single-line user prompt: show at input row without scrolling
+        epdPromptInInputRow = true;
+        strncpy(epdPromptBuf, lines[lineCount - 1], 127);
+        epdPromptBuf[127] = '\0';
+    }
+#endif
     drawHistory();
 }
 
@@ -1417,6 +1474,10 @@ int waitMsgIdx = 0;  // persistent — keeps rotating across calls
 // font gdY offsets (which can be negative) are clipped to the sprite bounds and
 // never bleed pixels into the chat line above.
 static void showStatusLine(const char* msg, uint16_t col) {
+#ifdef TARGET_EPAPER
+    (void)msg; (void)col;
+    return;
+#endif
 #ifdef TARGET_C3
     int lineH  = LINE_H_LARGE;
     int inputY = (HIST_H_KB_HIDE / lineH - 1) * lineH;
@@ -2045,7 +2106,9 @@ void sendPrompt() {
 #ifndef TARGET_C3
     kbVisible = false;   // hide KB; drawHistory() covers the KB area
 #endif
+#ifndef TARGET_EPAPER
     drawInputBar();      // clear full bar now — erases BS/Hide key remnants before API wait
+#endif
 
     // Show user message and thinking indicator
     addMessage(true, false, prompt);
@@ -2076,7 +2139,9 @@ void sendPrompt() {
 
     moreMode = true;   // after every reply, offer "More"
     wifiHealthy = (WiFi.status() == WL_CONNECTED);  // refresh after API call; LED uses RSSI independently
-    drawInputBar();
+#ifndef TARGET_EPAPER
+    drawInputBar();  // epaper: "> " already rendered in the full frame from addMessage() above
+#endif
 }
 
 #ifndef TARGET_C3
@@ -2399,6 +2464,10 @@ void setup() {
     // selectModel() leaves a transient "Ready." display; drawHistory() replaces it
     // with the properly-themed chat layout (blank + input prompt at bottom).
     rebuildLines();
+#ifdef TARGET_EPAPER
+    epdMsgPending = true;   // bypass rate limit — initial render must always go through
+    epdShowModel  = true;
+#endif
     drawHistory();
 }
 
@@ -2416,7 +2485,9 @@ void checkWiFiHealth() {
 
     if (ok != wifiHealthy) {
         wifiHealthy = ok;
+#ifndef TARGET_EPAPER
         drawInputBar();  // '>' and Send/More turn red on fail, white on recovery
+#endif
     }
 
     if (!ok) {
@@ -2425,9 +2496,11 @@ void checkWiFiHealth() {
         WiFi.begin(wifiSsid[0], wifiPass[0]);
     }
 
-#ifdef TARGET_C3
+#if defined(TARGET_C3) && !defined(TARGET_EPAPER)
     // Refresh WiFi signal icon every 2s; only redraw when the colour bucket changes.
     // Safe: loop() is blocked during API calls so this never races with streaming draws.
+    // Skipped for TARGET_EPAPER: B&W display has no colour RSSI icon, and frequent
+    // partial refreshes (500 ms each) cause the main loop to feel unresponsive.
     static unsigned long lastRssiDrawMs = 0;
     static uint16_t      lastRssiColor  = 0xFFFF;  // impossible sentinel
     if (millis() - lastRssiDrawMs >= 2000) {
@@ -2447,28 +2520,42 @@ void loop() {
         switch (ev.type) {
             case INPUT_SCROLL_UP: {
                 int lineH     = LINE_H_LARGE;
+#ifdef TARGET_EPAPER
+                int visSlots  = (SCREEN_H - lineH) / lineH;   // 6, matches histSlots
+#elif defined(TARGET_C3)
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
-#ifdef TARGET_C3
                 int visSlots  = maxVis - 2;  // slot 0 = heading, last = input
 #else
+                int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
+                int maxVis    = histH / lineH;
                 int visSlots  = maxVis;
 #endif
                 scrollOffset  = max(0, scrollOffset - visSlots / 2);
+#ifdef TARGET_EPAPER
+                epdMsgPending = true;   // bypass rate limit — scroll must always redraw
+#endif
                 drawHistory();
                 break;
             }
             case INPUT_SCROLL_DOWN: {
                 int lineH     = LINE_H_LARGE;
+#ifdef TARGET_EPAPER
+                int visSlots  = (SCREEN_H - lineH) / lineH;
+#elif defined(TARGET_C3)
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
-#ifdef TARGET_C3
-                int visSlots  = maxVis - 2;  // slot 0 = heading, last = input
+                int visSlots  = maxVis - 2;
 #else
+                int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
+                int maxVis    = histH / lineH;
                 int visSlots  = maxVis;
 #endif
                 int maxScroll = max(0, lineCount - visSlots);
                 scrollOffset  = min(scrollOffset + visSlots / 2, maxScroll);
+#ifdef TARGET_EPAPER
+                epdMsgPending = true;
+#endif
                 drawHistory();
                 break;
             }
@@ -2542,6 +2629,10 @@ do_new_conv:
             case INPUT_MODEL_MENU:
                 selectModel();
                 rebuildLines();
+#ifdef TARGET_EPAPER
+                epdMsgPending = true;   // bypass rate limit — model change must render immediately
+                epdShowModel  = true;
+#endif
                 drawHistory();
                 drawInputBar();
                 break;
