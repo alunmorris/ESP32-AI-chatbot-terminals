@@ -1,6 +1,7 @@
 // display_epaper.h — GxEPD2 display wrapper with TFT_eSPI-compatible API
 // Used only when TARGET_EPAPER is defined.
 // 300326 Initial
+//010426 Change user font to u8g2_font_luBIS08_tf
 #pragma once
 #ifdef TARGET_EPAPER
 
@@ -19,7 +20,7 @@
 
 // --- Font metrics for u8g2_font_helvB08_tf ---
 #define EPD_FONT            u8g2_font_helvB08_tf   // AI text (bold upright)
-#define EPD_FONT_USER       u8g2_font_ncenR08_tf   // user text (serif — visually distinct from AI bold)
+#define EPD_FONT_USER       u8g2_font_luBIS08_tf   // user text italic. No Helv italic.
 #define EPD_FONT_ASCENT     8    // pixels above baseline for cap letters (ascent_A = 8)
 #define FONT_LINE_H        13    // line spacing: max char height 13 (ascent 11 + descent 2), zero leading
 

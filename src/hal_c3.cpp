@@ -189,18 +189,34 @@ class ClientCB : public NimBLEClientCallbacks {
 
 static bool subscribeHID(NimBLEClient* client) {
     NimBLERemoteService* svc = client->getService(HID_SVC_UUID);
-    if (!svc) return false;
-    // Subscribe to ALL HID Report characteristics (keyboard may have multiple)
-    // NimBLE 2.x: getCharacteristics() returns const std::vector<...>& (not a pointer)
+    // Some keyboards hide services until fully encrypted — bust the cache and retry.
+    if (!svc) {
+        Serial.println("[BLE] HID svc missing, forcing cache refresh...");
+        vTaskDelay(pdMS_TO_TICKS(600));
+        client->getServices(true);   // true = bypass cache, re-fetch from peripheral
+        svc = client->getService(HID_SVC_UUID);
+    }
+    if (!svc) { Serial.println("[BLE] ERR: HID service not found"); return false; }
+
+    // Force characteristic refresh too in case they were hidden pre-encryption.
     const auto& chars = svc->getCharacteristics(true);
-    bool ok = false;
+    bool subscribedAny = false;
     for (auto* c : chars) {
-        if (c->getUUID() == HID_RPT_UUID) {
-            c->subscribe(true, hidNotifyCB, true);  // NimBLE 2.x arg order: (notify, cb, response)
-            ok = true;
+        if (c->getUUID() == HID_RPT_UUID && c->canNotify()) {
+            // Retry subscribe — rejected with "Insufficient Authentication" if SMP not done.
+            bool subOk = false;
+            for (int t = 0; t < 5; t++) {
+                if (c->subscribe(true, hidNotifyCB, true)) {
+                    Serial.println("[BLE] subscribed to HID report");
+                    subOk = true; subscribedAny = true; break;
+                }
+                Serial.printf("[BLE] subscribe() rejected (auth race?), retry %d/5\n", t + 1);
+                vTaskDelay(pdMS_TO_TICKS(400));
+            }
+            if (!subOk) Serial.println("[BLE] ERR: gave up subscribing to HID report");
         }
     }
-    return ok;
+    return subscribedAny;
 }
 
 static bool doConnect(const NimBLEAddress& addr, uint8_t connectTimeoutSec) {
@@ -240,15 +256,22 @@ static bool doConnect(const NimBLEAddress& addr, uint8_t connectTimeoutSec) {
             return false;
         }
     }
-    Serial.println("[BLE] connected, subscribing HID...");
+    // Force encryption to complete before touching HID characteristics.
+    // HID chars are security-protected; subscribing before the handshake finishes
+    // causes "Insufficient Authentication" and drops the connection.
+    Serial.println("[BLE] connected, securing link...");
+    bleClient->secureConnection();
+    vTaskDelay(pdMS_TO_TICKS(200));   // let SMP handshake start before touching characteristics
+
+    Serial.println("[BLE] link secure initiated, subscribing HID...");
     if (!subscribeHID(bleClient)) {
         Serial.println("[BLE] subscribeHID failed");
         bleClient->disconnect();
         return false;
     }
-    // Request a longer connection interval (80 × 1.25ms = 100ms) to yield more radio time to WiFi.
-    // Keyboard may or may not honour this; HID latency for typing is still acceptable at 100ms.
-    bleClient->setConnectionParams(80, 80, 0, 400);  // min, max, latency, supervision_timeout
+    // latency=30: keyboard may sleep for up to 30 events (~3s) between acks.
+    // timeout=1000 (10s) > (1+30)*100ms*2 = 6.2s minimum required by spec.
+    bleClient->setConnectionParams(80, 80, 30, 1000);
     connected = true;
     Serial.println("[BLE] HID subscribed OK");
     return true;

@@ -310,6 +310,23 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define GROQ_HOST         "api.groq.com"
 #define GROQ_MODEL        "openai/gpt-oss-120b"
 
+// --- AI system prompt ---
+// Word limit varies by display size: e-paper (250×122) fits fewer lines than TFT (320×240).
+#ifdef TARGET_EPAPER
+#  define AI_MAX_WORDS_STR "80"
+#else
+#  define AI_MAX_WORDS_STR "120"
+#endif
+#define AI_SYSTEM_PROMPT \
+    "Respond in " AI_MAX_WORDS_STR " words or fewer. Plain text only: no markdown, " \
+    "no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. " \
+    "Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, " \
+    "footnotes, source references, or attribution of any kind. Do not mention where " \
+    "information came from unless asked."
+// Appended for models with a web search tool (Gemini, Grok — not Groq).
+#define AI_WEB_SEARCH_SUFFIX \
+    " When quoting current or time-sensitive information, use your web search tool to check live sources first."
+
 // fontOn() loads the selected smooth font (see font.h). fontOff() unloads and restores GLCD.
 void fontOn()  { FONT_LOAD(tft); }
 void fontOff() { FONT_UNLOAD(tft); tft.setTextFont(1); }  // always restore GLCD explicitly
@@ -682,6 +699,12 @@ void rebuildLines() {
         {
             // Pixel-width word wrap using smooth font (DejaVuSansBold12px)
             fontOn();
+#ifdef TARGET_EPAPER
+            // Use the same font for measurement as will be used for rendering,
+            // so wrap points match display. Without this, a stale EPD_FONT_USER
+            // makes AI text wrap too early (serif is narrower than bold sans-serif).
+            tft.u8g2.setFont(isUser ? EPD_FONT_USER : EPD_FONT);
+#endif
             char lineBuf[128] = "";
             const char* p = full;
             while (*p && lineCount < MAX_LINES - 1) {
@@ -1614,7 +1637,7 @@ String callGemini(const char* prompt) {
         JsonObject sysInstr = reqDoc["system_instruction"].to<JsonObject>();
         JsonArray  sysParts = sysInstr["parts"].to<JsonArray>();
         JsonObject sysPart  = sysParts.add<JsonObject>();
-        sysPart["text"]     = "Respond in 120 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols. Use paragraphs to separate distinct ideas. Never include URLs or hyperlinks. When quoting current or time-sensitive information, use your search tool to check live sources first.";
+        sysPart["text"]     = AI_SYSTEM_PROMPT AI_WEB_SEARCH_SUFFIX;
 
         JsonArray contents = reqDoc["contents"].to<JsonArray>();
         for (int i = 0; i < historyCount - 1; i++) {
@@ -1816,7 +1839,7 @@ String callGrok(const char* prompt) {
         JsonDocument reqDoc;
         reqDoc["model"]        = GROK_MODEL;
         reqDoc["stream"]       = false;
-        reqDoc["instructions"] = "Respond in 120 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind. Do not mention where information came from. When quoting current or time-sensitive information, use your web search tool to check live sources first.";
+        reqDoc["instructions"] = AI_SYSTEM_PROMPT AI_WEB_SEARCH_SUFFIX;
 
         JsonArray input = reqDoc["input"].to<JsonArray>();
         for (int i = 0; i < historyCount - 1; i++) {
@@ -1981,7 +2004,7 @@ String callGroq(const char* prompt) {
         JsonArray messages = reqDoc["messages"].to<JsonArray>();
         JsonObject sysMsgObj = messages.add<JsonObject>();
         sysMsgObj["role"]    = "system";
-        sysMsgObj["content"] = "Respond in 120 words or fewer. Plain text only: no markdown, no ** or * emphasis, no tables, no bullet symbols, no numbered or unnumbered lists. Use paragraphs to separate distinct ideas. Never include URLs, hyperlinks, citations, footnotes, source references, or attribution of any kind.";
+        sysMsgObj["content"] = AI_SYSTEM_PROMPT;
 
         for (int i = 0; i < historyCount - 1; i++) {
             if (history[i].displayOnly) continue;
@@ -2577,7 +2600,14 @@ do_new_conv:
 #ifndef TARGET_C3
                 kbVisible = true;
 #endif
-                drawHistory(); drawInputBar();
+#ifdef TARGET_EPAPER
+                epdMsgPending = true;
+                epdShowModel  = false;
+#endif
+                drawHistory();
+#ifndef TARGET_EPAPER
+                drawInputBar();
+#endif
 #ifndef TARGET_C3
                 drawKeyboard();
 #endif
@@ -2639,7 +2669,9 @@ do_new_conv:
                 epdShowModel  = true;
 #endif
                 drawHistory();
+#ifndef TARGET_EPAPER
                 drawInputBar();
+#endif
                 break;
             default:
                 break;
