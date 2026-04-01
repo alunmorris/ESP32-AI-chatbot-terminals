@@ -51,6 +51,14 @@ bool halPollInput(InputEvent* ev) {
     return has;
 }
 
+bool halPeekInput(InputEvent* ev) {
+    xSemaphoreTake(rb_mutex, portMAX_DELAY);
+    bool has = (rb_tail != rb_head);
+    if (has) *ev = rb[rb_tail];   // read without advancing tail
+    xSemaphoreGive(rb_mutex);
+    return has;
+}
+
 // --- NVS bonded address store ---
 static NimBLEAddress loadBondedAddress(bool& found) {
     Preferences p;

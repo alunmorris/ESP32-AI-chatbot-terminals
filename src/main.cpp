@@ -2557,18 +2557,25 @@ void loop() {
                 int lineH     = LINE_H_LARGE;
 #ifdef TARGET_EPAPER
                 int visSlots  = (SCREEN_H - lineH) / lineH;   // 6, matches histSlots
+                if (scrollOffset == 0) break;  // already at bottom — ignore
+                scrollOffset  = max(0, scrollOffset - visSlots / 2);
+                // Drain buffered scroll-ups accumulated while screen was refreshing
+                { InputEvent peek;
+                  while (halPeekInput(&peek) && peek.type == INPUT_SCROLL_UP) {
+                      halPollInput(&peek);
+                      scrollOffset = max(0, scrollOffset - visSlots / 2);
+                  } }
+                epdMsgPending = true;
 #elif defined(TARGET_C3)
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
                 int visSlots  = maxVis - 2;  // slot 0 = heading, last = input
+                scrollOffset  = max(0, scrollOffset - visSlots / 2);
 #else
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
                 int visSlots  = maxVis;
-#endif
                 scrollOffset  = max(0, scrollOffset - visSlots / 2);
-#ifdef TARGET_EPAPER
-                epdMsgPending = true;   // bypass rate limit — scroll must always redraw
 #endif
                 drawHistory();
                 break;
@@ -2577,19 +2584,28 @@ void loop() {
                 int lineH     = LINE_H_LARGE;
 #ifdef TARGET_EPAPER
                 int visSlots  = (SCREEN_H - lineH) / lineH;
+                int maxScroll = max(0, lineCount - visSlots);
+                if (scrollOffset >= maxScroll) break;  // already at top — ignore
+                scrollOffset  = min(scrollOffset + visSlots / 2, maxScroll);
+                // Drain buffered scroll-downs accumulated while screen was refreshing
+                { InputEvent peek;
+                  while (halPeekInput(&peek) && peek.type == INPUT_SCROLL_DOWN) {
+                      halPollInput(&peek);
+                      scrollOffset = min(scrollOffset + visSlots / 2, maxScroll);
+                  } }
+                epdMsgPending = true;
 #elif defined(TARGET_C3)
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
                 int visSlots  = maxVis - 2;
+                int maxScroll = max(0, lineCount - visSlots);
+                scrollOffset  = min(scrollOffset + visSlots / 2, maxScroll);
 #else
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
                 int visSlots  = maxVis;
-#endif
                 int maxScroll = max(0, lineCount - visSlots);
                 scrollOffset  = min(scrollOffset + visSlots / 2, maxScroll);
-#ifdef TARGET_EPAPER
-                epdMsgPending = true;
 #endif
                 drawHistory();
                 break;

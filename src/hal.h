@@ -30,6 +30,9 @@ void halInit();
 // Non-blocking. Returns true and fills *ev if an input event is available.
 bool halPollInput(InputEvent* ev);
 
+// Non-destructive peek: returns true and fills *ev without consuming the event.
+bool halPeekInput(InputEvent* ev);
+
 // Play key-click sound. No-op on C3.
 void halClickSound();
 

@@ -53,6 +53,8 @@ bool halPollInput(InputEvent* ev) {
     return has;
 }
 
+bool halPeekInput(InputEvent* ev) { (void)ev; return false; }
+
 // --- NVS bonded address store ---
 static NimBLEAddress loadBondedAddress(bool& found) {
     Preferences p;

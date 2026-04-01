@@ -468,3 +468,5 @@ void pollKBHide() {
         }
     }
 }
+
+bool halPeekInput(InputEvent* ev) { (void)ev; return false; }
