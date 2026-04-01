@@ -155,21 +155,22 @@ static void reconnectTask(void*) {
         if (connected)  { vTaskDelay(pdMS_TO_TICKS(1000)); continue; }
         if (!hasBonded) { vTaskDelay(pdMS_TO_TICKS(2000)); continue; }
 
-        // Scan for keyboard — address may have changed since last session
+        // Scan for keyboard — address may have changed since last session.
+        // start() blocks; ScanCB calls stop() immediately on find, unblocking it.
         setupScan();
         NimBLEScan* scan = NimBLEDevice::getScan();
         wantConnect = false;
-        scan->start(10, false);
+        scan->start(0, false);
         for (int i = 0; i < 100 && !connected && !wantConnect; i++) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
         scan->stop();
         if (wantConnect && !connected) {
             wantConnect = false;
-            vTaskDelay(pdMS_TO_TICKS(200));  // let scan fully shut down before connecting
+            vTaskDelay(pdMS_TO_TICKS(200));
             doConnect(bondedAddr, 15);
         }
-        vTaskDelay(pdMS_TO_TICKS(500));  // brief pause before next scan window
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
@@ -200,7 +201,7 @@ static bool subscribeHID(NimBLEClient* client) {
     const auto& chars = svc->getCharacteristics(true);
     bool subscribedAny = false;
     for (auto* c : chars) {
-        if (c->getUUID() == HID_RPT_UUID && c->canNotify()) {
+        if (c->getUUID() == HID_RPT_UUID) {
             // Retry subscribe — rejected with "Insufficient Authentication" if SMP not done.
             bool subOk = false;
             for (int t = 0; t < 5; t++) {
@@ -218,7 +219,6 @@ static bool subscribeHID(NimBLEClient* client) {
 }
 
 static bool doConnect(const NimBLEAddress& addr, uint8_t connectTimeoutSec) {
-    // Always use a fresh client — reusing a client after a failed connect is unreliable
     if (bleClient) {
         NimBLEDevice::deleteClient(bleClient);
         bleClient = nullptr;
@@ -227,39 +227,30 @@ static bool doConnect(const NimBLEAddress& addr, uint8_t connectTimeoutSec) {
     bleClient->setClientCallbacks(new ClientCB(), false);
     bleClient->setConnectTimeout(connectTimeoutSec);
     Serial.printf("[BLE] connecting to %s...\n", addr.toString().c_str());
-    if (!bleClient->connect(addr)) {
-        if (connectTimeoutSec <= 3) {
-            // Boot-time fast try (3s) — keyboard likely asleep, fall through to scan
-            Serial.println("[BLE] boot connect failed, falling through to scan");
-            NimBLEDevice::deleteClient(bleClient);
-            bleClient = nullptr;
-            return false;
+
+    // FAST RETRY LOOP: The KB is only awake for a brief window.
+    // Do not use long delays here or it will go back to sleep!
+    bool connectedOk = false;
+    for (int i = 0; i < 3; i++) {
+        if (bleClient->connect(addr)) {
+            connectedOk = true;
+            break;
         }
-        // Reconnect task: keyboard may still be in directed-advertising mode toward
-        // our old address. Wait for it to time out and switch to undirected (~1.3s),
-        // then retry WITHOUT deleting bonds — the bond is almost certainly still valid.
-        // deleteAllBonds() is intentionally omitted here: wiping bonds on every failed
-        // connect was the primary cause of having to re-pair on every boot.
-        Serial.printf("[BLE] connect() failed (our addr=%s type=%d), waiting for undirected...\n",
-            NimBLEDevice::getAddress().toString().c_str(),
-            NimBLEDevice::getAddress().getType());
-        NimBLEDevice::deleteClient(bleClient);
-        vTaskDelay(pdMS_TO_TICKS(1500));
-        bleClient = NimBLEDevice::createClient();
-        bleClient->setClientCallbacks(new ClientCB(), false);
-        bleClient->setConnectTimeout(connectTimeoutSec);
-        Serial.printf("[BLE] retry connecting to %s...\n", addr.toString().c_str());
-        if (!bleClient->connect(addr)) {
-            Serial.println("[BLE] connect() failed (after wait)");
-            return false;
-        }
+        Serial.printf("[BLE] connect attempt %d failed, retrying quickly...\n", i + 1);
+        vTaskDelay(pdMS_TO_TICKS(200)); // Only 200ms wait, catch it before it sleeps
     }
-    // Force encryption to complete before touching HID characteristics.
-    // HID chars are security-protected; subscribing before the handshake finishes
-    // causes "Insufficient Authentication" and drops the connection.
+
+    if (!connectedOk) {
+        Serial.println("[BLE] all connect attempts failed. KB likely asleep.");
+        NimBLEDevice::deleteClient(bleClient);
+        bleClient = nullptr;
+        return false;
+    }
+
     Serial.println("[BLE] connected, securing link...");
     bleClient->secureConnection();
-    vTaskDelay(pdMS_TO_TICKS(200));   // let SMP handshake start before touching characteristics
+    // Give SMP time to do the cryptographic key exchange
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
     Serial.println("[BLE] link secure initiated, subscribing HID...");
     if (!subscribeHID(bleClient)) {
@@ -267,6 +258,7 @@ static bool doConnect(const NimBLEAddress& addr, uint8_t connectTimeoutSec) {
         bleClient->disconnect();
         return false;
     }
+
     // latency=30: keyboard may sleep for up to 30 events (~3s) between acks.
     // timeout=1000 (10s) > (1+30)*100ms*2 = 6.2s minimum required by spec.
     bleClient->setConnectionParams(80, 80, 30, 1000);
@@ -322,8 +314,8 @@ static void setupScan() {
     NimBLEScan* scan = NimBLEDevice::getScan();
     scan->setScanCallbacks(&gScanCB, false);
     scan->setActiveScan(true);
-    scan->setInterval(320);  // 200 ms interval (units of 0.625 ms)
-    scan->setWindow(96);     //  60 ms window  → 30% duty cycle, leaves 70% for WiFi
+    scan->setInterval(160);  // 100 ms interval (units of 0.625 ms)
+    scan->setWindow(160);   // 100 ms window  → 100% duty cycle; coex handles WiFi sharing
 }
 
 // --- halInit ---
@@ -364,27 +356,27 @@ void halInit() {
 
     if (hasBonded) {
         // Phase 1: scan for known keyboard — user taps a key to wake it and trigger advertising
-        bootRow(1, "Tap Enter twice");
+        bootRow(1, "Tap any key to wake keyboard");
 
         setupScan();
         NimBLEScan* scan = NimBLEDevice::getScan();
-        // 3 × 10s = 30s window; ScanCB sets wantConnect when it finds the keyboard
+        // 3 × 10s windows; start() blocks until ScanCB calls stop() (KB found) or 10s expires.
         for (int w = 0; w < 3 && !connected; w++) {
             wantConnect = false;
             Serial.printf("[EPD BLE] reconnect scan window %d\n", w);
-            scan->start(10, false);
-            for (int i = 0; i < 100 && !connected; i++) {
-                if (wantConnect) {
-                    wantConnect = false;
-                    NimBLEAddress found = bondedAddr;
-                    if (doConnect(found, 15)) {
-                        if (found != bondedAddr) { bondedAddr = found; saveBondedAddress(bondedAddr); }
-                    }
-                }
+            scan->start(0, false);
+            for (int i = 0; i < 100 && !connected && !wantConnect; i++) {
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
+            scan->stop();
+            if (wantConnect && !connected) {
+                wantConnect = false;
+                NimBLEAddress found = bondedAddr;
+                if (doConnect(found, 15)) {
+                    if (found != bondedAddr) { bondedAddr = found; saveBondedAddress(bondedAddr); }
+                }
+            }
         }
-        scan->stop();
         Serial.printf("[EPD BLE] reconnect scan done: connected=%d\n", connected);
     }
 
@@ -399,13 +391,14 @@ void halInit() {
         while (!connected) {
             wantConnect = false;
             Serial.println("[BLE scan] starting 10s window...");
-            scan->start(10, false);
-            for (int i = 0; i < 100 && !connected; i++) {
-                if (wantConnect) {
-                    wantConnect = false;
-                    doConnect(bondedAddr);
-                }
+            scan->start(0, false);
+            for (int i = 0; i < 100 && !connected && !wantConnect; i++) {
                 vTaskDelay(pdMS_TO_TICKS(100));
+            }
+            scan->stop();
+            if (wantConnect && !connected) {
+                wantConnect = false;
+                doConnect(bondedAddr);
             }
             Serial.printf("[BLE scan] window done, connected=%d\n", connected);
             if (!connected) {
