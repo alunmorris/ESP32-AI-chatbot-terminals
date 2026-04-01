@@ -1,4 +1,8 @@
 // Cheap AI Chat Keyboard — ESP32-C3 + CYD28 + ESP32-S2 Mini
+// 010426 AI system prompt: unified macro AI_SYSTEM_PROMPT; 80-word limit for epaper, 120 otherwise
+// 010426 E-paper: word-wrap uses correct font per message; epdShowModel; epdPromptInInputRow
+// 310326 WiFi power save: PS_NONE during API calls, MAX_MODEM idle (all targets)
+// 310326 CPU 80 MHz for C3 (setCpuFrequencyMhz); epdMsgPending rate-limit bypass
 // 300326 WiFi signal icon (dot + 3 arcs) bottom-right of C3/S2 input bar; refreshes every 2s
 // 300326 INPUT_DELETE (Del=forward-delete) and INPUT_MODEL_MENU (Home=model menu) added
 // 290326 Add ESP32-S2 Mini target (env:s2mini): USB HID keyboard via USB-C OTG, GPIO LED

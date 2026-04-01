@@ -1,4 +1,5 @@
 // hal_cyd28.cpp — CYD28 hardware: XPT2046 touch, LEDC LED+speaker, touch calibration
+// 310326 WiFi power save: PS_NONE during API calls, MAX_MODEM idle
 #include "hal.h"
 #include <Arduino.h>
 #include <esp_wifi.h>  // esp_wifi_set_ps()

@@ -1,5 +1,8 @@
 // hal_c3.cpp — ESP32-C3 Supermini: NimBLE BLE HID host keyboard input
 // No LED, no speaker, no touch.
+// 010426 BLE: fast retry loop (3x/200ms) replaces 1.5s sleep; scan duration 0 (indefinite); remove canNotify() guard
+// 010426 halInit: proceed to UI after Phase 1 if hasBonded; reconnectTask handles background reconnect
+// 310326 WiFi power save: PS_NONE during API calls, MAX_MODEM idle; BLE coex preference
 // 240326 Boot screen: sprite-based rendering (bootRow lambda) to fix C3 SPI glitches (white rect, garbled text)
 // 240326 Font selection: use FONT_LOAD/FONT_UNLOAD macros from font.h; support FONT_BUILTIN_16PX
 #ifdef TARGET_C3
@@ -361,7 +364,7 @@ void halInit() {
 
     if (hasBonded) {
         // Phase 1: scan for known keyboard — user taps a key to wake it and trigger advertising
-        bootRow(1, "Tap Enter twice");
+        bootRow(1, "Tap any key to wake keyboard");
 
         setupScan();
         NimBLEScan* scan = NimBLEDevice::getScan();

@@ -1,5 +1,8 @@
 // hal_epaper.cpp — ESP32-C3 Supermini: NimBLE BLE HID host keyboard input
 // No LED, no speaker, no touch.
+// 010426 BLE: fast retry loop (3x/200ms) replaces 1.5s sleep; scan duration 0 (indefinite); remove canNotify() guard
+// 310326 WiFi power save: PS_NONE during API calls, MAX_MODEM idle; BLE coex preference
+// 310326 BLE: secureConnection before subscribeHID; subscribe retry 5x; cache-bust hidden HID service
 // 300326 Initial: BLE keyboard + GxEPD2 frame-based boot screen
 #ifdef TARGET_EPAPER
 

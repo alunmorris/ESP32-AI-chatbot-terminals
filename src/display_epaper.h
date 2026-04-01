@@ -1,7 +1,7 @@
 // display_epaper.h — GxEPD2 display wrapper with TFT_eSPI-compatible API
 // Used only when TARGET_EPAPER is defined.
+// 010426 Change user font to u8g2_font_luBIS08_tf (italic serif)
 // 300326 Initial
-//010426 Change user font to u8g2_font_luBIS08_tf
 #pragma once
 #ifdef TARGET_EPAPER
 

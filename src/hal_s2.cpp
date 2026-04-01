@@ -2,6 +2,7 @@
 // GPIO 15: single LED (active-high) — driven by halSetLed(); main.cpp uses for WiFi status
 // GPIO 19/20: D-/D+ USB OTG via USB-C — keyboard powered externally (5 V VBUS required)
 // No BLE, no touch, no speaker.
+// 310326 WiFi power save: PS_NONE during API calls, MAX_MODEM idle
 // 280326 Initial implementation
 // 280326 S2_DUMMY_INPUT: bypass USB, feed fixed string into input ring buffer
 // 290326 LED: replace NeoPixel with simple GPIO (active-high)
