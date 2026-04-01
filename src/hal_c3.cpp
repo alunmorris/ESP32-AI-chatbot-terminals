@@ -359,12 +359,18 @@ void halInit() {
     bondedAddr = loadBondedAddress(hasBonded);
     Serial.printf("[C3 BLE] hasBonded=%d\n", hasBonded);
 
-    // Row 0 always: "Keyboard connection..."
-    bootRow(0, "Keyboard connection...");
+    // Help text rows 0-3
+    bootRow(0, "CRACK: Cheap Remote AI Chat Keyboard");
+    bootRow(1, "");
+    bootRow(2, "Chat commands:");
+    bootRow(3, "more (or ctrl-M) / new (or ctrl-N) / menu");
+
+    // Row 5 always: "Keyboard connection..."
+    bootRow(5, "Keyboard connection...");
 
     if (hasBonded) {
         // Phase 1: scan for known keyboard — user taps a key to wake it and trigger advertising
-        bootRow(1, "Tap any key to wake keyboard");
+        bootRow(6, "Tap any key to wake keyboard");
 
         setupScan();
         NimBLEScan* scan = NimBLEDevice::getScan();
@@ -391,11 +397,11 @@ void halInit() {
     if (!connected) {
         if (hasBonded) {
             // Known keyboard didn't respond — proceed to UI, reconnect in background.
-            bootRow(1, "Keyboard not found.");
+            bootRow(6, "Keyboard not found.");
             vTaskDelay(pdMS_TO_TICKS(1500));
         } else {
             // Phase 2: no bonded keyboard yet — pairing mode, block until paired.
-            bootRow(1, "Set keyboard to pairing...");
+            bootRow(6, "Set keyboard to pairing...");
 
             setupScan();
             NimBLEScan* scan = NimBLEDevice::getScan();
@@ -415,14 +421,14 @@ void halInit() {
                 }
                 if (!connected) {
                     dots += '.';
-                    bootRow(2, dots.c_str());
+                    bootRow(6, dots.c_str());
                 }
             }
         }
     }
 
     // Always clear the boot area before returning (covers all connection paths).
-    tft.fillRect(0, 0, tft.width(), 3 * lineH, BOOT_BG);
+    tft.fillRect(0, 0, tft.width(), 7 * lineH, BOOT_BG);
 
     // Start reconnect background task
     xTaskCreate(reconnectTask, "ble_recon", 4096, nullptr, 1, &reconnectTaskHandle);

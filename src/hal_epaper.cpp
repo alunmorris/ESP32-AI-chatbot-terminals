@@ -335,15 +335,36 @@ void halInit() {
     // Each bootRow() does a partial refresh (500 ms) of one text row.
     const int lineH = FONT_LINE_H;
 
-    // Initial full-screen white clear
+    bondedAddr = loadBondedAddress(hasBonded);
+    Serial.printf("[EPD BLE] hasBonded=%d\n", hasBonded);
+
+    // Render help text + "Keyboard connection..." + initial status in one full frame.
+    // Drawing all static rows together avoids the ~500ms per-row partial refresh delay.
+    auto drawBootLine = [&](int row, const char* text) {
+        tft.u8g2.setForegroundColor(GxEPD_BLACK);
+        tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+        tft.u8g2.setCursor(6, row * lineH + EPD_FONT_ASCENT);
+        tft.u8g2.print(text);
+    };
     tft.beginFrame();
     tft.epd.fillScreen(GxEPD_WHITE);
+    tft.epd.fillRect(0, 0, tft.epd.width(), lineH, GxEPD_BLACK);
+    tft.u8g2.setForegroundColor(GxEPD_WHITE);
+    tft.u8g2.setBackgroundColor(GxEPD_BLACK);
+    tft.u8g2.setCursor(6, EPD_FONT_ASCENT + 2);  // +2px so title sits clear of the top edge
+    tft.u8g2.print("CRACK: Cheap Remote AI Chat Keyboard");
+    drawBootLine(2, "Chat commands:");
+    drawBootLine(3, "more (or ctrl-M) / new (or ctrl-N) / menu");
+
+    drawBootLine(5, "Keyboard connection...");
+    drawBootLine(6, hasBonded ? "Tap any key to wake keyboard" : "");
     tft.endFrame();
 
+    // Partial-frame update for a single status row — height exactly lineH avoids overlap.
     auto bootRow = [&](int row, const char* text) {
         int rowY = row * lineH;
-        tft.beginPartialFrame(0, rowY, tft.epd.width(), lineH + 4);
-        tft.epd.fillRect(0, rowY, tft.epd.width(), lineH + 4, GxEPD_WHITE);
+        tft.beginPartialFrame(0, rowY, tft.epd.width(), lineH);
+        tft.epd.fillRect(0, rowY, tft.epd.width(), lineH, GxEPD_WHITE);
         tft.u8g2.setForegroundColor(GxEPD_BLACK);
         tft.u8g2.setBackgroundColor(GxEPD_WHITE);
         tft.u8g2.setCursor(6, rowY + EPD_FONT_ASCENT);
@@ -351,15 +372,8 @@ void halInit() {
         tft.endFrame();
     };
 
-    bondedAddr = loadBondedAddress(hasBonded);
-    Serial.printf("[EPD BLE] hasBonded=%d\n", hasBonded);
-
-    // Row 0 always: "Keyboard connection..."
-    bootRow(0, "Keyboard connection...");
-
     if (hasBonded) {
         // Phase 1: scan for known keyboard — user taps a key to wake it and trigger advertising
-        bootRow(1, "Tap any key to wake keyboard");
 
         setupScan();
         NimBLEScan* scan = NimBLEDevice::getScan();
@@ -384,9 +398,16 @@ void halInit() {
     }
 
     if (!connected) {
-        // Phase 2: pairing mode — any HID keyboard can connect.
-        // Clear row 1 (was "Tap a key") and show pairing prompt.
-        bootRow(1, "Set keyboard to pairing...");
+        // Phase 2: pairing mode — clear screen first, then show pairing prompt.
+        tft.beginFrame();
+        tft.epd.fillScreen(GxEPD_WHITE);
+        tft.epd.fillRect(0, 0, tft.epd.width(), lineH, GxEPD_BLACK);
+        tft.u8g2.setForegroundColor(GxEPD_WHITE);
+        tft.u8g2.setBackgroundColor(GxEPD_BLACK);
+        tft.u8g2.setCursor(6, EPD_FONT_ASCENT + 2);
+        tft.u8g2.print("CRACK: Cheap Remote AI Chat Keyboard");
+        drawBootLine(2, "Set keyboard to pairing...");
+        tft.endFrame();
 
         setupScan();
         NimBLEScan* scan = NimBLEDevice::getScan();
@@ -406,14 +427,13 @@ void halInit() {
             Serial.printf("[BLE scan] window done, connected=%d\n", connected);
             if (!connected) {
                 dots += '.';
-                bootRow(2, dots.c_str());
+                bootRow(3, dots.c_str());
             }
         }
     }
 
-    // Always show final connection status before returning (covers all connection paths).
-    bootRow(0, "Keyboard connection...");
-    bootRow(1, "Connected.");
+    // Update status row only — row 4 ("Keyboard connection...") already correct from full frame.
+    bootRow(5, "Connected.");
 
     // Start reconnect background task
     xTaskCreate(reconnectTask, "ble_recon", 4096, nullptr, 1, &reconnectTaskHandle);

@@ -1,47 +1,49 @@
-// Cheap AI Chat Keyboard — ESP32-C3 + CYD28 + ESP32-S2 Mini
-// 010426 AI system prompt: unified macro AI_SYSTEM_PROMPT; 80-word limit for epaper, 120 otherwise
-// 010426 E-paper: word-wrap uses correct font per message; epdShowModel; epdPromptInInputRow
-// 310326 WiFi power save: PS_NONE during API calls, MAX_MODEM idle (all targets)
-// 310326 CPU 80 MHz for C3 (setCpuFrequencyMhz); epdMsgPending rate-limit bypass
-// 300326 WiFi signal icon (dot + 3 arcs) bottom-right of C3/S2 input bar; refreshes every 2s
-// 300326 INPUT_DELETE (Del=forward-delete) and INPUT_MODEL_MENU (Home=model menu) added
-// 290326 Add ESP32-S2 Mini target (env:s2mini): USB HID keyboard via USB-C OTG, GPIO LED
-// 240326 Cursor movement: left/right arrows move insertion point; insert/delete at cursor
-// 240326 Gemini request: PrintBuffer flushes serializeJson in 1KB chunks (fixes TLS write failure)
-// 240326 Gemini request: serialize directly to socket via measureJson+PrintBuffer (no String body)
-// 240326 Gemini response: adaptive reserve cap based on largest free heap block after TLS
-// 240326 Gemini response: reserve fullResp after reqDoc freed to avoid three-way heap pressure
-// 240326 Cursor visible in input bar: 2px bar drawn at inputCursor position in all render paths
-// 240326 Light mode: all pages (model menu, AP scan, KB connect) use invertDisplay colours
-// 240326 Font switch: FONT_LOAD/FONT_UNLOAD macros from font.h; add FONT_BUILTIN_16PX option
-// 240326 Font switch: font.h #define FONT_18PX selects 18px/22px or 12px/15px font system-wide
-// 240326 enterPassword C3: sprite-per-row rendering to clear AP scan and fill blank rows
-// 240326 Fix 'g' clipping: corrected LINE_H_LARGE=15, TXT_H=15 to match VLW yAdvance
-// 090326 Key click: 4 kHz squarewave 10 ms on GPIO 26 speaker (LEDC ch 3)
-// 040326 Unicode fonts: VLW smooth fonts, Latin Extended + special chars, remove transliteration
-// 030326 Touch calibration: key C at boot, 2-point crosshair, saved to NVS
-// 030326 Transliterate accented chars (Latin-1, Latin Extended-A) to ASCII in addMessage
-// 030326 Add Groq API (api.groq.com), model qwen/qwen3-32b, key 5 at boot
-// 030326 WiFi AP menu bugfixes: disconnect before scan, redraw KB after selectAP
-// 030326 WiFi AP menu: NVS credential store, AP scan/picker, enterPassword, selectAP
-// 020326 KB layout: BS height 40px, Hide aligned to dot key, clear KB remnants on Send
-// 280226 Add Grok API (xAI), key 4 at boot; route callGemini/callGrok via useGrok flag
-// 280226 Bold font: custom DejaVuSansBold 12px (yAdv=15), LINE_H_LARGE=15 SPLASH_H=45
-// 280226 RGB LED WiFi signal strength: blue=strong, cyan, green, orange, red=lost
-// 270226 Fix large-font truncation: grow Message.text→2048, full→2060, buffers; setTextWrap(false)
-// 270226 WiFi health ping, red > on fail, reconnect; global endpoint for Flash
-// 270226 Alt key: number row + ,./ alt layer, mutual exclusion with shift
-// 270226 Memory tuning and final polish
-// 270226 Initial scaffold
-// 270226 Display init, constants, backlight
-// 270226 Keyboard rendering
-// 270226 Input bar rendering
-// 270226 Conversation history rendering
-// 270226 Touch handling
-// 270226 WiFi and NTP
-// 270226 Base64url utility
-// 270226 Switch to Gemini API key, add callGemini()
-// 270226 Send flow wired
+/********** Cheap AI Chat Keyboard — ESP32-C3 + CYD28 + ESP32-S2 Mini **********
+* 010426 Change title (except SLUG) to CRACK: Cheap Remote AI Chat Keyboard
+* 010426 AI system prompt: unified macro AI_SYSTEM_PROMPT; 80-word limit for epaper, 120 otherwise
+* 010426 E-paper: word-wrap uses correct font per message; epdShowModel; epdPromptInInputRow
+* 310326 WiFi power save: PS_NONE during API calls, MAX_MODEM idle (all targets)
+* 310326 CPU 80 MHz for C3 (setCpuFrequencyMhz); epdMsgPending rate-limit bypass
+* 300326 WiFi signal icon (dot + 3 arcs) bottom-right of C3/S2 input bar; refreshes every 2s
+* 300326 INPUT_DELETE (Del=forward-delete) and INPUT_MODEL_MENU (Home=model menu) added
+* 290326 Add ESP32-S2 Mini target (env:s2mini): USB HID keyboard via USB-C OTG, GPIO LED
+* 240326 Cursor movement: left/right arrows move insertion point; insert/delete at cursor
+* 240326 Gemini request: PrintBuffer flushes serializeJson in 1KB chunks (fixes TLS write failure)
+* 240326 Gemini request: serialize directly to socket via measureJson+PrintBuffer (no String body)
+* 240326 Gemini response: adaptive reserve cap based on largest free heap block after TLS
+* 240326 Gemini response: reserve fullResp after reqDoc freed to avoid three-way heap pressure
+* 240326 Cursor visible in input bar: 2px bar drawn at inputCursor position in all render paths
+* 240326 Light mode: all pages (model menu, AP scan, KB connect) use invertDisplay colours
+* 240326 Font switch: FONT_LOAD/FONT_UNLOAD macros from font.h; add FONT_BUILTIN_16PX option
+* 240326 Font switch: font.h #define FONT_18PX selects 18px/22px or 12px/15px font system-wide
+* 240326 enterPassword C3: sprite-per-row rendering to clear AP scan and fill blank rows
+* 240326 Fix 'g' clipping: corrected LINE_H_LARGE=15, TXT_H=15 to match VLW yAdvance
+* 090326 Key click: 4 kHz squarewave 10 ms on GPIO 26 speaker (LEDC ch 3)
+* 040326 Unicode fonts: VLW smooth fonts, Latin Extended + special chars, remove transliteration
+* 030326 Touch calibration: key C at boot, 2-point crosshair, saved to NVS
+* 030326 Transliterate accented chars (Latin-1, Latin Extended-A) to ASCII in addMessage
+* 030326 Add Groq API (api.groq.com), model qwen/qwen3-32b, key 5 at boot
+* 030326 WiFi AP menu bugfixes: disconnect before scan, redraw KB after selectAP
+* 030326 WiFi AP menu: NVS credential store, AP scan/picker, enterPassword, selectAP
+* 020326 KB layout: BS height 40px, Hide aligned to dot key, clear KB remnants on Send
+* 280226 Add Grok API (xAI), key 4 at boot; route callGemini/callGrok via useGrok flag
+* 280226 Bold font: custom DejaVuSansBold 12px (yAdv=15), LINE_H_LARGE=15 SPLASH_H=45
+* 280226 RGB LED WiFi signal strength: blue=strong, cyan, green, orange, red=lost
+* 270226 Fix large-font truncation: grow Message.text→2048, full→2060, buffers; setTextWrap(false)
+* 270226 WiFi health ping, red > on fail, reconnect; global endpoint for Flash
+* 270226 Alt key: number row + ,./ alt layer, mutual exclusion with shift
+* 270226 Memory tuning and final polish
+* 270226 Initial scaffold
+* 270226 Display init, constants, backlight
+* 270226 Keyboard rendering
+* 270226 Input bar rendering
+* 270226 Conversation history rendering
+* 270226 Touch handling
+* 270226 WiFi and NTP
+* 270226 Base64url utility
+* 270226 Switch to Gemini API key, add callGemini()
+* 270226 Send flow wired
+**********************************************************************************************/
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -1621,6 +1623,7 @@ String callGemini(const char* prompt) {
     // Reconnect WiFi if dropped
     if (WiFi.status() != WL_CONNECTED) {
         connectWiFi(wifiSsid[0], wifiPass[0]);
+        connectWiFi(wifiSsid[0], wifiPass[0]);
         if (WiFi.status() != WL_CONNECTED) return "ERR: WiFi not connected";
     }
 
@@ -2215,11 +2218,11 @@ void showModelChoices() {
     tft.u8g2.setForegroundColor(GxEPD_BLACK);
     tft.u8g2.setBackgroundColor(GxEPD_WHITE);
     tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
-    tft.u8g2.print("Cheap AI Chat Keyboard");
-    tft.u8g2.setCursor(2, LINE_H_LARGE + EPD_FONT_ASCENT);
+    tft.u8g2.print("CRACK: Cheap Remote AI Chat Keyboard");
+    tft.u8g2.setCursor(2, 2 * LINE_H_LARGE + EPD_FONT_ASCENT);
     tft.u8g2.print("Select AI model:");
     {
-        int optY = 2 * LINE_H_LARGE;
+        int optY = 3 * LINE_H_LARGE;
         const char* opts[] = {
             "1 Gemini 2.5 Flash",
             "2 Gemini 3 Flash",
@@ -2289,13 +2292,13 @@ void selectModel() {
             int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
             tft.fillRect(0, 0, SCREEN_W, clearH, bg);
 #ifdef TARGET_C3
-            c3Line(0,              "Cheap AI Chat Keyboard", TFT_GREEN,    bg);
+            c3Line(0,              "CRACK: Cheap Remote AI Chat Keyboard", TFT_GREEN,    bg);
             c3Line(LINE_H_P3,      GEMINI_MODEL,             TFT_GREEN,    bg);
             c3Line(2 * LINE_H_P3,  "Ready.",                 TFT_DARKGREY, bg);
 #else
             uiFontOn();
             tft.setTextColor(TFT_GREEN, bg);
-            tft.drawString("Cheap AI Chat Keyboard", 2, 0);
+            tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
             tft.drawString(GEMINI_MODEL, 2, LINE_H_LARGE);
             tft.setTextColor(TFT_DARKGREY, bg);
             tft.drawString("Ready.", 2, 2 * LINE_H_LARGE);
@@ -2310,13 +2313,13 @@ void selectModel() {
             int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
             tft.fillRect(0, 0, SCREEN_W, clearH, bg);
 #ifdef TARGET_C3
-            c3Line(0,              "Cheap AI Chat Keyboard", TFT_GREEN,    bg);
+            c3Line(0,              "CRACK: Cheap Remote AI Chat Keyboard", TFT_GREEN,    bg);
             c3Line(LINE_H_P3,      "Grok 4.1 Fast",          TFT_GREEN,    bg);
             c3Line(2 * LINE_H_P3,  "Ready.",                 TFT_DARKGREY, bg);
 #else
             uiFontOn();
             tft.setTextColor(TFT_GREEN, bg);
-            tft.drawString("Cheap AI Chat Keyboard", 2, 0);
+            tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
             tft.drawString("Grok 4.1 Fast", 2, LINE_H_LARGE);
             tft.setTextColor(TFT_DARKGREY, bg);
             tft.drawString("Ready.", 2, 2 * LINE_H_LARGE);
@@ -2332,13 +2335,13 @@ void selectModel() {
             int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
             tft.fillRect(0, 0, SCREEN_W, clearH, bg);
 #ifdef TARGET_C3
-            c3Line(0,              "Cheap AI Chat Keyboard", TFT_GREEN,    bg);
+            c3Line(0,              "CRACK: Cheap Remote AI Chat Keyboard", TFT_GREEN,    bg);
             c3Line(LINE_H_P3,      "Groq GPT-OSS-120b",      TFT_GREEN,    bg);
             c3Line(2 * LINE_H_P3,  "Ready.",                 TFT_DARKGREY, bg);
 #else
             uiFontOn();
             tft.setTextColor(TFT_GREEN, bg);
-            tft.drawString("Cheap AI Chat Keyboard", 2, 0);
+            tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
             tft.drawString("Groq GPT-OSS-120b", 2, LINE_H_LARGE);
             tft.setTextColor(TFT_DARKGREY, bg);
             tft.drawString("Ready.", 2, 2 * LINE_H_LARGE);
@@ -2353,12 +2356,12 @@ void selectModel() {
             tft.fillScreen(bg);
             drawInputBar();
 #ifdef TARGET_C3
-            c3Line(0,          "Cheap AI Chat Keyboard", invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
-            c3Line(LINE_H_P3,  "Select AI model:",       invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
+            c3Line(0,          "CRACK: Cheap Remote AI Chat Keyboard", invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
+            c3Line(2 * LINE_H_P3,  "Select AI model:",       invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
 #else
             uiFontOn(); tft.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
-            tft.drawString("Cheap AI Chat Keyboard", 2, 0);
-            tft.drawString("Select AI model:",       2, TXT_H + 4);
+            tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
+            tft.drawString("Select AI model:",       2, 2 * TXT_H + 4);
             uiFontOff();
 #endif
             showModelChoices();
@@ -2369,8 +2372,8 @@ void selectModel() {
             calibrateTouch();
             tft.fillScreen(COL_BG);
             uiFontOn(); tft.setTextColor(TFT_DARKGREY, COL_BG);
-            tft.drawString("Cheap AI Chat Keyboard", 2, 0);
-            tft.drawString("Select AI model:",       2, TXT_H);
+            tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
+            tft.drawString("Select AI model:",       2, 2 * TXT_H);
             uiFontOff();
             drawKeyboard();
             drawInputBar(); showModelChoices();
@@ -2479,13 +2482,13 @@ void setup() {
         uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
         uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
 #if defined(TARGET_C3) && !defined(TARGET_EPAPER)
-        c3Line(0,          "Cheap AI Chat Keyboard", fg, bg);
-        c3Line(LINE_H_P3,  "Select AI model:",       fg, bg);
+        c3Line(0,          "CRACK: Cheap Remote AI Chat Keyboard", fg, bg);
+        c3Line(2 * LINE_H_P3,  "Select AI model:",       fg, bg);
 #else
         uiFontOn();
         tft.setTextColor(fg, bg);
-        tft.drawString("Cheap AI Chat Keyboard", 2, 0);
-        tft.drawString("Select AI model:",       2, TXT_H + 4);
+        tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
+        tft.drawString("Select AI model:",       2, 2 * TXT_H + 4);
         uiFontOff();
 #endif
     }
@@ -2598,7 +2601,12 @@ do_new_conv:
                 history[historyCount].isUser = true;
                 history[historyCount].isError = false;
                 history[historyCount].displayOnly = true;
-                strncpy(history[historyCount].text, "[New chat]", 2047);
+                {
+                    const char* ml = useGrok ? "Grok 4.1 Fast" : useGroq ? "Groq OSS-120b" : GEMINI_MODEL;
+                    char newChatBuf[64];
+                    snprintf(newChatBuf, sizeof(newChatBuf), "[New chat with %s]", ml);
+                    strncpy(history[historyCount].text, newChatBuf, 2047);
+                }
                 historyCount++;
                 rebuildLines();
 #ifndef TARGET_C3
@@ -2627,6 +2635,11 @@ do_new_conv:
                     moreMode = true;
                     sendPrompt();
                     break;
+                }
+                if (strcmp(inputBuf, "menu") == 0) {
+                    inputBuf[0] = '\0'; inputLen = 0; inputCursor = 0;
+                    selectModel();
+                    goto do_new_conv;
                 }
                 if (inputLen == 0 && historyCount == 0) break;
                 sendPrompt();
@@ -2666,6 +2679,7 @@ do_new_conv:
                 if (inputCursor < inputLen) { inputCursor++; drawInputBar(); }
                 break;
             case INPUT_MODEL_MENU:
+do_model_menu:
                 selectModel();
                 rebuildLines();
 #ifdef TARGET_EPAPER
