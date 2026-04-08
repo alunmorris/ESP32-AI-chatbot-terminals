@@ -1,4 +1,9 @@
 /********** Cheap AI Chat Keyboard — ESP32-C3 + CYD28 + ESP32-S2 Mini **********
+* 060426 TARGET_EPAPER: halDeepSleep() after 5 min idle; skip initial screen clear on deep sleep wake
+* 030426
+* 030426 Add #define DEBUG_SERIAL Needs to be // out to allow CPU sleep (Gemini)
+* 050426 WiFi idle timeout: 120s → 125s → 60s
+* 010426 Power: tickless idle sleep (esp_pm), WiFi idle timeout, wake-on-keystroke (Gemini)
 * 010426 Change title (except SLUG) to CRACK: Cheap Remote AI Chat Keyboard
 * 010426 AI system prompt: unified macro AI_SYSTEM_PROMPT; 80-word limit for epaper, 120 otherwise
 * 010426 E-paper: word-wrap uses correct font per message; epdShowModel; epdPromptInInputRow
@@ -34,21 +39,13 @@
 * 270226 Alt key: number row + ,./ alt layer, mutual exclusion with shift
 * 270226 Memory tuning and final polish
 * 270226 Initial scaffold
-* 270226 Display init, constants, backlight
-* 270226 Keyboard rendering
-* 270226 Input bar rendering
-* 270226 Conversation history rendering
-* 270226 Touch handling
-* 270226 WiFi and NTP
-* 270226 Base64url utility
-* 270226 Switch to Gemini API key, add callGemini()
-* 270226 Send flow wired
 **********************************************************************************************/
 
 #include <Arduino.h>
 #include <SPI.h>
 #ifdef TARGET_EPAPER
 #  include "display_epaper.h"  // GxEPD2 wrapper; defines FONT_LINE_H, TFT_eSprite alias, etc.
+#  include "esp_sleep.h"	   //allow low power op - precompiled FreeRTOS kernel intentionally disables Automatic Tickless Idle
 #else
 #  include <TFT_eSPI.h>
 #  include "font.h"                        // selects 12px or 18px font via FONT_18PX
@@ -63,6 +60,8 @@
 #endif
 #include <Preferences.h>
 #include "hal.h"
+
+//#define DEBUG_SERIAL true				//comment out for low power. Serial on stops CPU Light Sleep	
 
 // --- Credentials (kept out of version control) ---
 #include "secrets.h"  // copy secrets.h.example → secrets.h and fill in your keys
@@ -228,6 +227,7 @@ static bool epdMsgPending       = false;
 static bool epdPromptInInputRow = false;  // short user prompt: replace input row, no scroll
 static char epdPromptBuf[128]   = "";
 static bool epdShowModel        = false;  // show model name until first AI response
+static bool epdSleeping         = false;  // replace input row with sleep message
 #endif
 
 // --- Keyboard layout ---
@@ -302,6 +302,10 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define KEY_FLASH_MS        100    // key highlight flash duration on tap
 #define API_TIMEOUT_MS    25000    // API response deadline ms
 #define API_WAIT_FIRST_MS  4000    // ms before first waiting message appears
+
+#define WIFI_IDLE_TIMEOUT_MS    60000    // 60 seconds
+#define DEEP_SLEEP_TIMEOUT_MS  110000    //DEBUG 30 sec. 5 minutes idle → deep sleep (TARGET_EPAPER only)
+unsigned long lastActivityMs = 0;      // Tracks the last time the user pressed a key
 
 // --- WiFi RSSI thresholds for LED colour ---
 #define RSSI_THRESH_BLUE   -55    // ≥ this dBm → blue (strongest)
@@ -850,27 +854,37 @@ void drawHistory() {
     // Input row
     {
         tft.u8g2.setFont(EPD_FONT);
-        tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
-        tft.u8g2.print("> ");
-        int32_t promptW = tft.textWidth("> ");
-        int start = inputCursor;
-        int availW = SCREEN_W - (int)promptW - 4;
-        while (start > 0) {
-            char tmp[INPUT_BUF_SIZE];
-            int len = inputCursor - (start - 1);
-            strncpy(tmp, inputBuf + start - 1, len);
-            tmp[len] = '\0';
-            if ((int)tft.textWidth(tmp) > availW - 2) break;
-            start--;
+        if (epdSleeping) {
+            tft.epd.fillRect(0, inputY, SCREEN_W, lineH, GxEPD_BLACK);
+            tft.u8g2.setForegroundColor(GxEPD_WHITE);
+            tft.u8g2.setBackgroundColor(GxEPD_BLACK);
+            tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
+            tft.u8g2.print("Sleeping... press BOOT to wake");
+            tft.u8g2.setForegroundColor(GxEPD_BLACK);
+            tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+        } else {
+            tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
+            tft.u8g2.print("> ");
+            int32_t promptW = tft.textWidth("> ");
+            int start = inputCursor;
+            int availW = SCREEN_W - (int)promptW - 4;
+            while (start > 0) {
+                char tmp[INPUT_BUF_SIZE];
+                int len = inputCursor - (start - 1);
+                strncpy(tmp, inputBuf + start - 1, len);
+                tmp[len] = '\0';
+                if ((int)tft.textWidth(tmp) > availW - 2) break;
+                start--;
+            }
+            char dispBuf[INPUT_BUF_SIZE] = {0};
+            strncpy(dispBuf, inputBuf + start, inputLen - start);
+            tft.u8g2.setCursor(2 + (int)promptW, inputY + EPD_FONT_ASCENT);
+            tft.u8g2.print(dispBuf);
+            char preCur[INPUT_BUF_SIZE] = {0};
+            strncpy(preCur, inputBuf + start, inputCursor - start);
+            int curX = 2 + (int)promptW + (int)tft.textWidth(preCur);
+            tft.epd.drawLine(curX, inputY + 1, curX, inputY + lineH - 2, GxEPD_BLACK);
         }
-        char dispBuf[INPUT_BUF_SIZE] = {0};
-        strncpy(dispBuf, inputBuf + start, inputLen - start);
-        tft.u8g2.setCursor(2 + (int)promptW, inputY + EPD_FONT_ASCENT);
-        tft.u8g2.print(dispBuf);
-        char preCur[INPUT_BUF_SIZE] = {0};
-        strncpy(preCur, inputBuf + start, inputCursor - start);
-        int curX = 2 + (int)promptW + (int)tft.textWidth(preCur);
-        tft.epd.drawLine(curX, inputY + 1, curX, inputY + lineH - 2, GxEPD_BLACK);
     }
 
     tft.endFrame();
@@ -1180,6 +1194,17 @@ void enterPassword(const char* ssidPrompt, char* out) {
                     memmove(inputBuf + inputCursor + 1, inputBuf + inputCursor, inputLen - inputCursor + 1);
                     inputBuf[inputCursor] = ev.ch;
                     inputLen++; inputCursor++;
+#ifdef TARGET_EPAPER
+                    // Drain any queued chars before the 500ms partial refresh —
+                    // avoids one refresh per keystroke when typing faster than the display.
+                    { InputEvent nx;
+                      while (inputLen < 63 && halPeekInput(&nx) && nx.type == INPUT_CHAR) {
+                          halPollInput(&nx);
+                          memmove(inputBuf + inputCursor + 1, inputBuf + inputCursor, inputLen - inputCursor + 1);
+                          inputBuf[inputCursor] = nx.ch;
+                          inputLen++; inputCursor++;
+                      } }
+#endif
                     drawInputBar();
                 }
                 break;
@@ -2384,8 +2409,12 @@ void selectModel() {
 }
 
 void setup() {
+#ifdef DEBUG_SERIAL
     Serial.begin(115200);
-#ifdef TARGET_C3
+#endif
+
+
+#if defined(TARGET_C3) && !defined(TARGET_EPAPER3V3)
     delay(1500);  // USB CDC needs time to enumerate before first output
 #endif
 #if defined(TARGET_C3) && !defined(TARGET_S2)
@@ -2417,10 +2446,13 @@ void setup() {
     tft.init();
 #ifdef TARGET_EPAPER
     tft.setRotation(1);  // landscape (250 wide × 122 tall)
-    // Initial full-screen white clear — required before any partial updates
-    tft.beginFrame();
-    tft.epd.fillScreen(GxEPD_WHITE);
-    tft.endFrame();
+    if (!halIsDeepSleepWake()) {
+        // Initial full-screen white clear — required before any partial updates on cold boot.
+        // Skip on deep sleep wake: display retains image and selectModel() does its own full refresh.
+        tft.beginFrame();
+        tft.epd.fillScreen(GxEPD_WHITE);
+        tft.endFrame();
+    }
 #elif defined(TARGET_P3)
     // ST7789P3 284×76 native landscape
     tft.setRotation(0);
@@ -2465,6 +2497,11 @@ void setup() {
     tft.fillScreen(invertDisplay ? COL_INVERT_BG : COL_BG);  // clear splash
 #endif
 
+    // Deep sleep wake: start BLE reconnect task now. WiFi connect attempt is done, so no radio
+    // contention. Must start BEFORE selectAP() so keyboard is available for AP/password input.
+    // On normal boot halInit() has already connected BLE; this is a no-op (reconnectTaskHandle set).
+    halStartBleReconnect();
+
     if (!wifiOk) {
         selectAP();  // scan → pick AP → enter password → connect; returns only on success
     }
@@ -2504,9 +2541,29 @@ void setup() {
     epdShowModel  = true;
 #endif
     drawHistory();
+
+    lastActivityMs = millis();
 }
 
 void checkWiFiHealth() {
+    // 1. Check for Idle Timeout
+    if (WiFi.getMode() != WIFI_OFF && (millis() - lastActivityMs > WIFI_IDLE_TIMEOUT_MS)) {
+        Serial.println("[Power] 2 minutes idle. Sleeping WiFi radio.");
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        wifiHealthy = false;
+        updateLedWifi();
+#ifndef TARGET_EPAPER
+        drawInputBar();
+#endif
+        return;
+    }
+    // 2. If intentionally asleep, skip health pings and reconnect logic
+    if (WiFi.getMode() == WIFI_OFF) {
+        updateLedWifi(); 
+        return; 
+    }
+
     updateLedWifi();  // instant — runs every loop, LED reacts immediately to dropout
 
     if (millis() - lastWiFiCheckMs < 3000) return;
@@ -2552,6 +2609,14 @@ void checkWiFiHealth() {
 void loop() {
     InputEvent ev;
     if (halPollInput(&ev)) {
+        lastActivityMs = millis();
+
+        if (WiFi.getMode() == WIFI_OFF) {
+            Serial.println("[Power] Activity detected. Waking WiFi...");
+            WiFi.mode(WIFI_STA);
+            WiFi.begin(wifiSsid[0], wifiPass[0]);
+        }
+
         switch (ev.type) {
             case INPUT_SCROLL_UP: {
                 int lineH     = LINE_H_LARGE;
@@ -2685,6 +2750,18 @@ do_new_conv:
                     memmove(inputBuf + inputCursor + 1, inputBuf + inputCursor, inputLen - inputCursor + 1);
                     inputBuf[inputCursor] = ev.ch;
                     inputLen++; inputCursor++;
+#ifdef TARGET_EPAPER
+                    // Drain any queued chars before the 500ms display refresh.
+                    { InputEvent nx;
+                      while (inputLen < INPUT_MAX_LEN && halPeekInput(&nx) && nx.type == INPUT_CHAR) {
+                          halPollInput(&nx);
+                          if (nx.ch != 0) {
+                              memmove(inputBuf + inputCursor + 1, inputBuf + inputCursor, inputLen - inputCursor + 1);
+                              inputBuf[inputCursor] = nx.ch;
+                              inputLen++; inputCursor++;
+                          }
+                      } }
+#endif
                     drawInputBar();
                 }
                 break;
@@ -2712,4 +2789,22 @@ do_model_menu:
         }
     }
     checkWiFiHealth();
+#ifdef TARGET_EPAPER
+    if (millis() - lastActivityMs > DEEP_SLEEP_TIMEOUT_MS) {
+        epdMsgPending = true;
+        epdSleeping   = true;
+        drawHistory();           // full refresh: chat content + "Sleeping..." input row
+        if (WiFi.getMode() != WIFI_OFF) {
+            WiFi.disconnect(true);
+            WiFi.mode(WIFI_OFF);
+            wifiHealthy = false;
+        }
+        halDeepSleep();          // blocks until key or BOOT; BLE stays connected via vTaskDelay
+        epdSleeping   = false;
+        lastActivityMs = millis();
+        drawInputBar();          // partial refresh only: clear sleep message (~500ms)
+    }
+#endif
+    delay(20);
+
 }

@@ -1,6 +1,10 @@
 // hal.h — Hardware Abstraction Layer interface
 // CYD28: implemented in hal_cyd28.cpp
 // ESP32-C3: implemented in hal_c3.cpp
+/*
+ * 060426 declare halDeepSleep(), halIsDeepSleepWake()
+ * 030426 declare halSleepIdle()
+ */
 #pragma once
 #include <stdint.h>
 
@@ -52,3 +56,13 @@ void pollKBHide();
 // CYD28: no-ops.
 void halBeforeApiCall();
 void halAfterApiCall();
+
+//030426 for power saving (no-op on standard espressif32; pioarduino builds use tickless idle)
+void halSleepIdle();
+
+// 060426 Deep sleep: enter ESP32 deep sleep with GPIO 9 wakeup (TARGET_EPAPER only; no-op stub elsewhere).
+void halDeepSleep();
+// Returns true if the current boot was caused by waking from deep sleep.
+bool halIsDeepSleepWake();
+// Start BLE reconnect task after WiFi connects (deep sleep wake path — avoids radio contention).
+void halStartBleReconnect();

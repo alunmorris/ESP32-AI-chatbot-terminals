@@ -54,6 +54,10 @@ bool halPollInput(InputEvent* ev) {
 }
 
 bool halPeekInput(InputEvent* ev) { (void)ev; return false; }
+void halSleepIdle() {}
+void halDeepSleep() {}
+bool halIsDeepSleepWake() { return false; }
+void halStartBleReconnect() {}
 
 // --- NVS bonded address store ---
 static NimBLEAddress loadBondedAddress(bool& found) {

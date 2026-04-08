@@ -1,5 +1,16 @@
 // hal_epaper.cpp — ESP32-C3 Supermini: NimBLE BLE HID host keyboard input
 // No LED, no speaker, no touch.
+// 080426 halDeepSleep(): revert to light sleep + GPIO9; reconnectTask handles BLE on wake
+// 070426 halDeepSleep(): vTaskDelay loop (BLE alive); wake: drawInputBar() not full drawHistory()
+// 070426 halDeepSleep(): two-phase sleep — 100ms timer wakeup for 110s (BLE alive), then GPIO9 only
+// 070426 setupScan(): continuous scan (window=interval=100ms) — 2% duty cycle missed KB adverts after wake
+// 070426 halDeepSleep(): switched to light sleep — GPIO9 (BOOT) not RTC-capable on C3, can't deep sleep
+// 060426 halDeepSleep(): GPIO 9 wakeup deep sleep; halIsDeepSleepWake(); halInit() skips boot screen on wake
+// 050426 halSleepIdle: call esp_pm_configure(light_sleep=true) — was no-op, tickless idle never engaged
+// 050426 pioarduino: __wrap_log_printf stub; patch_esptool.py --use-segments for epaper3v3 tickless idle
+// 040426 epaper3v3: TARGET_EPAPER3V3 define; silence Serial; setCpuFrequencyMhz(80) at halInit start
+// 030426 fixup CPU not sleeping. Add halSleepIdle() and call dummyScanCB (Gemini)
+// 010426 Power: BLE scan duty cycle 30%, btStop/btStart during API calls for mutual exclusion (Gemini)
 // 010426 BLE: fast retry loop (3x/200ms) replaces 1.5s sleep; scan duration 0 (indefinite); remove canNotify() guard
 // 310326 WiFi power save: PS_NONE during API calls, MAX_MODEM idle; BLE coex preference
 // 310326 BLE: secureConnection before subscribeHID; subscribe retry 5x; cache-bust hidden HID service
@@ -15,6 +26,31 @@
 #include "display_epaper.h"
 #include "esp_coexist.h"  // coexistence preference API
 #include <esp_wifi.h>     // esp_wifi_set_ps()
+#include <esp_pm.h>       // esp_pm_configure()
+#include <esp_sleep.h>    // esp_light_sleep_start(), esp_sleep_enable_gpio_wakeup()
+#include <esp_system.h>   // esp_reset_reason()
+#include <driver/gpio.h>  // gpio_wakeup_enable()
+#ifdef TARGET_EPAPER3V3
+#include "soc/usb_serial_jtag_struct.h"  // USB_SERIAL_JTAG.conf0.usb_pad_enable
+#endif
+
+// epaper3v3: no USB, no Serial — silence all debug output at compile time
+#ifdef TARGET_EPAPER3V3
+#define EPD_LOG(...)  do {} while(0)
+#else
+#define EPD_LOG(...)  Serial.printf(__VA_ARGS__)
+#endif
+
+// Workaround: pioarduino 55.03.37 framework-arduinoespressif32-libs esp32c3
+// pre-compiled libespressif__esp_diagnostics.a is missing __wrap_log_printf,
+// but the linker uses --wrap=log_printf which requires it.
+// No-op stub: safe during early IDF boot before USB/UART is initialised.
+#include <stdarg.h>
+extern "C" {
+    void __wrap_log_printf(const char *format, ...) {
+        (void)format;
+    }
+}
 
 // External e-paper display for status during init
 extern EpaperDisplay tft;
@@ -148,7 +184,7 @@ static void hidNotifyCB(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, 
 }
 
 // --- BLE client + reconnect ---
-static NimBLEClient*  bleClient    = nullptr;
+static NimBLEClient* bleClient    = nullptr;
 static NimBLEAddress  bondedAddr;
 static bool           hasBonded    = false;
 static volatile bool  connected    = false;
@@ -163,7 +199,7 @@ static TaskHandle_t reconnectTaskHandle = nullptr;
 // The user's next keypress wakes the keyboard and makes it advertise.
 static void reconnectTask(void*) {
     for (;;) {
-        if (connected)  { vTaskDelay(pdMS_TO_TICKS(1000)); continue; }
+        if (connected)  { vTaskDelay(pdMS_TO_TICKS(100));  continue; }  // 100ms: react quickly after sleep wake
         if (!hasBonded) { vTaskDelay(pdMS_TO_TICKS(2000)); continue; }
 
         // Scan for keyboard — address may have changed since last session.
@@ -201,12 +237,12 @@ static bool subscribeHID(NimBLEClient* client) {
     NimBLERemoteService* svc = client->getService(HID_SVC_UUID);
     // Some keyboards hide services until fully encrypted — bust the cache and retry.
     if (!svc) {
-        Serial.println("[BLE] HID svc missing, forcing cache refresh...");
+        EPD_LOG("%s\n", "[BLE] HID svc missing, forcing cache refresh...");
         vTaskDelay(pdMS_TO_TICKS(600));
         client->getServices(true);   // true = bypass cache, re-fetch from peripheral
         svc = client->getService(HID_SVC_UUID);
     }
-    if (!svc) { Serial.println("[BLE] ERR: HID service not found"); return false; }
+    if (!svc) { EPD_LOG("%s\n", "[BLE] ERR: HID service not found"); return false; }
 
     // Force characteristic refresh too in case they were hidden pre-encryption.
     const auto& chars = svc->getCharacteristics(true);
@@ -217,13 +253,13 @@ static bool subscribeHID(NimBLEClient* client) {
             bool subOk = false;
             for (int t = 0; t < 5; t++) {
                 if (c->subscribe(true, hidNotifyCB, true)) {
-                    Serial.println("[BLE] subscribed to HID report");
+                    EPD_LOG("%s\n", "[BLE] subscribed to HID report");
                     subOk = true; subscribedAny = true; break;
                 }
-                Serial.printf("[BLE] subscribe() rejected (auth race?), retry %d/5\n", t + 1);
+                EPD_LOG("[BLE] subscribe() rejected (auth race?), retry %d/5\n", t + 1);
                 vTaskDelay(pdMS_TO_TICKS(400));
             }
-            if (!subOk) Serial.println("[BLE] ERR: gave up subscribing to HID report");
+            if (!subOk) EPD_LOG("%s\n", "[BLE] ERR: gave up subscribing to HID report");
         }
     }
     return subscribedAny;
@@ -237,7 +273,7 @@ static bool doConnect(const NimBLEAddress& addr, uint8_t connectTimeoutSec) {
     bleClient = NimBLEDevice::createClient();
     bleClient->setClientCallbacks(new ClientCB(), false);
     bleClient->setConnectTimeout(connectTimeoutSec);
-    Serial.printf("[BLE] connecting to %s...\n", addr.toString().c_str());
+    EPD_LOG("[BLE] connecting to %s...\n", addr.toString().c_str());
 
     // FAST RETRY LOOP: The KB is only awake for a brief window.
     // Do not use long delays here or it will go back to sleep!
@@ -247,25 +283,25 @@ static bool doConnect(const NimBLEAddress& addr, uint8_t connectTimeoutSec) {
             connectedOk = true;
             break;
         }
-        Serial.printf("[BLE] connect attempt %d failed, retrying quickly...\n", i + 1);
+        EPD_LOG("[BLE] connect attempt %d failed, retrying quickly...\n", i + 1);
         vTaskDelay(pdMS_TO_TICKS(200)); // Only 200ms wait, catch it before it sleeps
     }
 
     if (!connectedOk) {
-        Serial.println("[BLE] all connect attempts failed. KB likely asleep.");
+        EPD_LOG("%s\n", "[BLE] all connect attempts failed. KB likely asleep.");
         NimBLEDevice::deleteClient(bleClient);
         bleClient = nullptr;
         return false;
     }
 
-    Serial.println("[BLE] connected, securing link...");
+    EPD_LOG("%s\n", "[BLE] connected, securing link...");
     bleClient->secureConnection();
     // Give SMP time to do the cryptographic key exchange
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    Serial.println("[BLE] link secure initiated, subscribing HID...");
+    EPD_LOG("%s\n", "[BLE] link secure initiated, subscribing HID...");
     if (!subscribeHID(bleClient)) {
-        Serial.println("[BLE] subscribeHID failed");
+        EPD_LOG("%s\n", "[BLE] subscribeHID failed");
         bleClient->disconnect();
         return false;
     }
@@ -274,7 +310,7 @@ static bool doConnect(const NimBLEAddress& addr, uint8_t connectTimeoutSec) {
     // timeout=1000 (10s) > (1+30)*100ms*2 = 6.2s minimum required by spec.
     bleClient->setConnectionParams(80, 80, 30, 1000);
     connected = true;
-    Serial.println("[BLE] HID subscribed OK");
+    EPD_LOG("%s\n", "[BLE] HID subscribed OK");
     return true;
 }
 
@@ -284,7 +320,7 @@ class ScanCB : public NimBLEScanCallbacks {
         bool isHID  = dev->isAdvertisingService(HID_SVC_UUID);
         bool isKB   = dev->getName().find("Keyboard") != std::string::npos ||
                       dev->getName().find("keyboard") != std::string::npos;
-        Serial.printf("[BLE scan] found: %s name='%s' HID=%d KB=%d advType=%d\n",
+        EPD_LOG("[BLE scan] found: %s name='%s' HID=%d KB=%d advType=%d\n",
             dev->getAddress().toString().c_str(),
             dev->getName().c_str(), isHID, isKB, dev->getAdvType());
         if (!isHID && !isKB) return;  // accept HID service OR keyboard name (directed adv has no UUID)
@@ -296,9 +332,9 @@ class ScanCB : public NimBLEScanCallbacks {
             // resolves it via IRK from its own bond store — no NVS write needed.
             hasBonded = true;
             saveBondedAddress(bondedAddr);
-            Serial.println("[BLE scan] new keyboard — address saved");
+            EPD_LOG("%s\n", "[BLE scan] new keyboard — address saved");
         }
-        Serial.println("[BLE scan] HID found — flagging for connect");
+        EPD_LOG("%s\n", "[BLE scan] HID found — flagging for connect");
         wantConnect = true;  // connect from main loop, not from callback
     }
 };
@@ -320,22 +356,35 @@ static NimBLEAddress addrPlusOne(const NimBLEAddress& addr) {
     return NimBLEAddress(next.c_str(), addr.getType());
 }
 
+bool halIsDeepSleepWake() {
+    return esp_reset_reason() == ESP_RST_DEEPSLEEP;
+}
+
 // Register scan callbacks on the current scan singleton (must be called after each NimBLE init)
+//030426 Gemini mod for low power
 static void setupScan() {
     NimBLEScan* scan = NimBLEDevice::getScan();
     scan->setScanCallbacks(&gScanCB, false);
-    scan->setActiveScan(true);
-    scan->setInterval(160);  // 100 ms interval (units of 0.625 ms)
-    scan->setWindow(160);   // 100 ms window  → 100% duty cycle; coex handles WiFi sharing
+    // Passive scan: no SCAN_REQ Tx, just listen. Keyboards advertise UUID in the adv packet.
+    scan->setActiveScan(false);
+    // Continuous scan (window == interval): catches first KB advertisement immediately after wake.
+    // Previous 2% duty cycle (20ms/1s) took ~6s to find KB after it started advertising.
+    scan->setInterval(160); // 100 ms (units of 0.625 ms)
+    scan->setWindow(160);   // 100 ms — continuous
 }
 
 // --- halInit ---
 void halInit() {
+#ifdef TARGET_EPAPER3V3
+    // Disable USB Serial/JTAG PHY — still powered by default even with ARDUINO_USB_MODE=0.
+    // Saves ~7 mA on ESP32-C3.
+    USB_SERIAL_JTAG.conf0.usb_pad_enable = 0;
+#endif
     rb_mutex = xSemaphoreCreateMutex();
-    Serial.println("[EPD BLE] Starting NimBLE init...");
+    EPD_LOG("%s\n", "[EPD BLE] Starting NimBLE init...");
     NimBLEDevice::init("");
     NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_PUBLIC);  // use factory MAC, stable across reinits
-    Serial.println("[EPD BLE] NimBLE init done");
+    EPD_LOG("%s\n", "[EPD BLE] NimBLE init done");
     NimBLEDevice::setSecurityAuth(true, false, false);  // bonding, Just Works
     // NimBLE 2.x: security callbacks live in NimBLEClientCallbacks (see ClientCB above)
 
@@ -344,7 +393,26 @@ void halInit() {
     const int lineH = FONT_LINE_H;
 
     bondedAddr = loadBondedAddress(hasBonded);
-    Serial.printf("[EPD BLE] hasBonded=%d\n", hasBonded);
+    EPD_LOG("[EPD BLE] hasBonded=%d\n", hasBonded);
+
+    // On deep sleep wake: skip full boot screen and blocking BLE scan.
+    // The reconnect task runs in the background; keyboard reconnects on first keypress.
+    if (halIsDeepSleepWake()) {
+        // BLE reconnect task is started later via halStartBleReconnect(), called from setup()
+        // after WiFi connects. Starting BLE scan here would race with WiFi association on the
+        // ESP32-C3's shared radio and prevent WiFi from connecting.
+        EPD_LOG("%s\n", "[EPD BLE] Deep sleep wake — skipping boot screen, deferring BLE scan");
+        const int lineH = FONT_LINE_H;
+        tft.beginPartialFrame(0, 0, tft.epd.width(), lineH);
+        tft.epd.fillRect(0, 0, tft.epd.width(), lineH, GxEPD_BLACK);
+        tft.u8g2.setFont(EPD_FONT);
+        tft.u8g2.setForegroundColor(GxEPD_WHITE);
+        tft.u8g2.setBackgroundColor(GxEPD_BLACK);
+        tft.u8g2.setCursor(6, EPD_FONT_ASCENT + 2);
+        tft.u8g2.print("CRACK: Cheap Remote AI Chat Keyboard");
+        tft.endFrame();
+        return;
+    }
 
     // Render help text + "Keyboard connection..." + initial status in one full frame.
     // Drawing all static rows together avoids the ~500ms per-row partial refresh delay.
@@ -388,7 +456,7 @@ void halInit() {
         // 3 × 10s windows; start() blocks until ScanCB calls stop() (KB found) or 10s expires.
         for (int w = 0; w < 3 && !connected; w++) {
             wantConnect = false;
-            Serial.printf("[EPD BLE] reconnect scan window %d\n", w);
+            EPD_LOG("[EPD BLE] reconnect scan window %d\n", w);
             scan->start(0, false);
             for (int i = 0; i < 100 && !connected && !wantConnect; i++) {
                 vTaskDelay(pdMS_TO_TICKS(100));
@@ -402,7 +470,24 @@ void halInit() {
                 }
             }
         }
-        Serial.printf("[EPD BLE] reconnect scan done: connected=%d\n", connected);
+        // Extra 3s grace before pairing mode — keyboard may still be waking
+        if (!connected) {
+            bootRow(5, "Keyboard connection... (3s)");
+            wantConnect = false;
+            scan->start(0, false);
+            for (int i = 0; i < 30 && !connected && !wantConnect; i++) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+            scan->stop();
+            if (wantConnect && !connected) {
+                wantConnect = false;
+                NimBLEAddress found = bondedAddr;
+                if (doConnect(found, 15)) {
+                    if (found != bondedAddr) { bondedAddr = found; saveBondedAddress(bondedAddr); }
+                }
+            }
+        }
+        EPD_LOG("[EPD BLE] reconnect scan done: connected=%d\n", connected);
     }
 
     if (!connected) {
@@ -422,7 +507,7 @@ void halInit() {
         String dots;
         while (!connected) {
             wantConnect = false;
-            Serial.println("[BLE scan] starting 10s window...");
+            EPD_LOG("%s\n", "[BLE scan] starting 10s window...");
             scan->start(0, false);
             for (int i = 0; i < 100 && !connected && !wantConnect; i++) {
                 vTaskDelay(pdMS_TO_TICKS(100));
@@ -432,7 +517,7 @@ void halInit() {
                 wantConnect = false;
                 doConnect(bondedAddr);
             }
-            Serial.printf("[BLE scan] window done, connected=%d\n", connected);
+            EPD_LOG("[BLE scan] window done, connected=%d\n", connected);
             if (!connected) {
                 dots += '.';
                 bootRow(3, dots.c_str());
@@ -445,24 +530,34 @@ void halInit() {
 
     // Start reconnect background task
     xTaskCreate(reconnectTask, "ble_recon", 4096, nullptr, 1, &reconnectTaskHandle);
+
+    // Enable automatic light sleep — CPU sleeps whenever FreeRTOS is idle.
+    // BLE wakes it on incoming HID notifications; halBeforeApiCall disables it during TLS.
+    halSleepIdle();
 }
 
 // --- BLE coexistence around API calls ---
-// Keep BLE connected — just give WiFi radio priority during TLS.
-// BLE link survives (may be laggy) and resumes immediately after.
+// Give WiFi radio priority during TLS; BLE link survives (may be briefly laggy).
 void halBeforeApiCall() {
     if (reconnectTaskHandle) vTaskSuspend(reconnectTaskHandle);
     NimBLEDevice::getScan()->stop();
     esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
-    esp_wifi_set_ps(WIFI_PS_NONE);   // full radio power during TLS — no dropped connections
-    Serial.printf("[BLE] before API: heap=%u\n", ESP.getFreeHeap());
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    EPD_LOG("[Power] before API: Coex WiFi. Heap=%u\n", ESP.getFreeHeap());
 }
 
 void halAfterApiCall() {
-    esp_wifi_set_ps(WIFI_PS_MAX_MODEM);  // back to low-power idle
+    esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
     esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
-    Serial.printf("[BLE] after API: heap=%u\n", ESP.getFreeHeap());
+    EPD_LOG("[Power] after API: Coex Balance. Heap=%u\n", ESP.getFreeHeap());
     if (reconnectTaskHandle) vTaskResume(reconnectTaskHandle);
+}
+
+// Start BLE reconnect task after WiFi is up (deep sleep wake path only).
+void halStartBleReconnect() {
+    if (!reconnectTaskHandle) {
+        xTaskCreate(reconnectTask, "ble_recon", 4096, nullptr, 1, &reconnectTaskHandle);
+    }
 }
 
 // --- No-op stubs ---
@@ -471,5 +566,30 @@ void halSetLed(uint8_t, uint8_t, uint8_t) {}
 void halLoadTouchCal() {}
 void calibrateTouch() {}
 void pollKBHide() {}
+
+void halSleepIdle() {
+    // Light sleep via esp_pm_configure() requires CONFIG_PM_ENABLE=y (pioarduino only).
+    // Standard espressif32 builds use halDeepSleep() on idle timeout instead.
+}
+
+void halDeepSleep() {
+    // Light sleep: very low current (~1-2mA). BLE radio clock is gated so the keyboard
+    // disconnects, but reconnectTask re-scans automatically on wake using continuous scan
+    // (setInterval/setWindow=160) so the keyboard reconnects quickly.
+    // Only GPIO9 (BOOT) wakes the device.
+    gpio_set_direction(GPIO_NUM_9, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(GPIO_NUM_9, GPIO_PULLUP_ONLY);
+    gpio_wakeup_enable(GPIO_NUM_9, GPIO_INTR_LOW_LEVEL);
+    esp_sleep_enable_gpio_wakeup();
+    // Disconnect cleanly before sleep: clears NimBLE's internal connection state so it can
+    // scan immediately on wake rather than spending seconds cleaning up a stale connection.
+    // This also makes the keyboard start advertising immediately (it sees the disconnect).
+    if (bleClient && bleClient->isConnected()) {
+        bleClient->disconnect();
+    }
+    connected = false;
+    esp_light_sleep_start();
+    // FreeRTOS resumes here. NimBLE is already in clean disconnected state; reconnectTask scans.
+}
 
 #endif // TARGET_EPAPER

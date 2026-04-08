@@ -470,3 +470,7 @@ void pollKBHide() {
 }
 
 bool halPeekInput(InputEvent* ev) { (void)ev; return false; }
+void halSleepIdle() {}
+void halDeepSleep() {}
+bool halIsDeepSleepWake() { return false; }
+void halStartBleReconnect() {}

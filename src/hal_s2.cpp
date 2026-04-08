@@ -524,6 +524,10 @@ void halInit() {
 
 // ── No-op stubs ───────────────────────────────────────────────────────────────
 bool halPeekInput(InputEvent* ev) { (void)ev; return false; }
+void halSleepIdle() {}
+void halDeepSleep() {}
+bool halIsDeepSleepWake() { return false; }
+void halStartBleReconnect() {}
 void halClickSound()  {}
 void halLoadTouchCal() {}
 void calibrateTouch() {}
