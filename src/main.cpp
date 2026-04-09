@@ -2307,7 +2307,7 @@ void showModelChoices(bool sessionAvail = false) {
     uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
 #ifdef TARGET_P3
     int optY = 2 * LINE_H_P3;
-    c3Line(optY, "1 Gemini 2.5 Flash", fg, bg); optY += LINE_H_P3;
+    c3Line(optY, "1 Gemini 3.1 Flash Lite", fg, bg); optY += LINE_H_P3;
     c3Line(optY, "4 Grok 4.1 Fast",    fg, bg); optY += LINE_H_P3;
     if (invertDisplay)
         c3Line(optY, "D Dark Theme",   fg, bg);
@@ -2325,7 +2325,7 @@ void showModelChoices(bool sessionAvail = false) {
     {
         int optY = 3 * LINE_H_LARGE;
         const char* opts[] = {
-            "1 Gemini 2.5 Flash",
+            "1 Gemini 3.1 Flash Lite",
             "2 Gemini 3 Flash",
             "3 Gemini 3.1 Pro",
             "4 Grok 4.1 Fast",
@@ -2344,7 +2344,7 @@ void showModelChoices(bool sessionAvail = false) {
     tft.endFrame();
 #elif defined(TARGET_C3)
     int optY = 2 * LINE_H_LARGE;
-    c3Line(optY, "1 Gemini 2.5 Flash", fg, bg); optY += LINE_H_LARGE;
+    c3Line(optY, "1 Gemini 3.1 Flash Lite", fg, bg); optY += LINE_H_LARGE;
     c3Line(optY, "2 Gemini 3 Flash",   fg, bg); optY += LINE_H_LARGE;
     c3Line(optY, "3 Gemini 3.1 Pro",   fg, bg); optY += LINE_H_LARGE;
     c3Line(optY, "4 Grok 4.1 Fast",    fg, bg); optY += LINE_H_LARGE;
@@ -2355,7 +2355,7 @@ void showModelChoices(bool sessionAvail = false) {
     uiFontOn();
     tft.setTextColor(fg, bg);
     int optY = 2 * TXT_H + 4;  // start below the two header lines
-    tft.drawString("1 Gemini 2.5 Flash", 2, optY); optY += TXT_H;
+    tft.drawString("1 Gemini 3.1 Flash Lite", 2, optY); optY += TXT_H;
     tft.drawString("2 Gemini 3 Flash",   2, optY); optY += TXT_H;
     tft.drawString("3 Gemini 3.1 Pro",   2, optY); optY += TXT_H;
     tft.drawString("4 Grok 4.1 Fast",    2, optY); optY += TXT_H;
@@ -2368,7 +2368,7 @@ void showModelChoices(bool sessionAvail = false) {
 
 void selectModel() {
     static const char* modelIds[]    = {
-        "gemini-2.5-flash",
+        "gemini-3.1-flash-lite-preview",
         "gemini-3-flash-preview",
         "gemini-3.1-pro-preview"
     };
