@@ -304,7 +304,7 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define API_WAIT_FIRST_MS  4000    // ms before first waiting message appears
 
 #define WIFI_IDLE_TIMEOUT_MS    60000    // 60 seconds
-#define DEEP_SLEEP_TIMEOUT_MS  61000    //DEBUG 61 sec. → deep sleep (TARGET_EPAPER only)
+#define DEEP_SLEEP_TIMEOUT_MS  300000    //5 mins → deep sleep (TARGET_EPAPER only)
 unsigned long lastActivityMs = 0;      // Tracks the last time the user pressed a key
 
 // --- WiFi RSSI thresholds for LED colour ---
@@ -1025,14 +1025,15 @@ void addMessage(bool isUser, bool isError, const char* text) {
     history[historyCount].isUser       = isUser;
     history[historyCount].isError      = isError;
     history[historyCount].displayOnly  = false;
-    strncpy(history[historyCount].text, text, 3071);
-    history[historyCount].text[3071] = '\0';
+    const int TMAX = (int)sizeof(history[historyCount].text) - 1;
+    strncpy(history[historyCount].text, text, TMAX);
+    history[historyCount].text[TMAX] = '\0';
     // Sanitise: pass supported UTF-8 codepoints through unchanged.
     // Strip C0 controls; normalise space-like and hyphen-like chars not in font;
     // drop zero-width/invisible chars; replace remaining unsupported sequences with '?'.
     {
         const char* s = history[historyCount].text;
-        char tmp[3084];
+        char tmp[sizeof(history[historyCount].text) + 4];
         char* d   = tmp;
         char* end = tmp + sizeof(tmp) - 4;
         while (*s && d < end) {
@@ -1081,8 +1082,8 @@ void addMessage(bool isUser, bool isError, const char* text) {
             }
         }
         *d = '\0';
-        strncpy(history[historyCount].text, tmp, 3071);
-        history[historyCount].text[3071] = '\0';
+        strncpy(history[historyCount].text, tmp, TMAX);
+        history[historyCount].text[TMAX] = '\0';
     }
     historyCount++;
     scrollOffset = 0;   // auto-scroll to bottom
@@ -2302,17 +2303,39 @@ static bool loadSession() {
 }
 #endif // TARGET_EPAPER
 
+// Single source of truth for AI model options.
+// Add or rename entries here — menu display and key handling both derive from this table.
+struct ModelDef {
+    char        key;     // keypress shown in menu
+    const char* name;    // human-readable display name
+    const char* apiId;   // Gemini model ID; nullptr for non-Gemini backends
+    bool        global;  // geminiUseGlobal flag (Gemini only)
+    bool        isGrok;  // route to Grok (xAI)
+    bool        isGroq;  // route to Groq
+    bool        p3;      // show on P3 (284×76, space-limited)
+};
+static const ModelDef MODEL_DEFS[] = {
+    {'1', "Gemini 3.1 Flash Lite", "gemini-3.1-flash-lite-preview", true,  false, false, true },
+    {'2', "Gemini 3 Flash",        "gemini-3-flash-preview",        true,  false, false, false},
+    {'3', "Gemini 3.1 Pro",        "gemini-3.1-pro-preview",        false, false, false, false},
+    {'4', "Grok 4.1 Fast",         nullptr,                         false, true,  false, true },
+    {'5', "Groq OSS-120b",         nullptr,                         false, false, true,  false},
+};
+static const int NUM_MODELS = (int)(sizeof(MODEL_DEFS) / sizeof(MODEL_DEFS[0]));
+
 void showModelChoices(bool sessionAvail = false) {
+    char buf[40];  // longest entry: "5 Gemini 3.1 Flash Lite" = well under 40
     uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
     uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
 #ifdef TARGET_P3
     int optY = 2 * LINE_H_P3;
-    c3Line(optY, "1 Gemini 3.1 Flash Lite", fg, bg); optY += LINE_H_P3;
-    c3Line(optY, "4 Grok 4.1 Fast",    fg, bg); optY += LINE_H_P3;
-    if (invertDisplay)
-        c3Line(optY, "D Dark Theme",   fg, bg);
+    for (int i = 0; i < NUM_MODELS; i++) {
+        if (!MODEL_DEFS[i].p3) continue;
+        snprintf(buf, sizeof(buf), "%c %s", MODEL_DEFS[i].key, MODEL_DEFS[i].name);
+        c3Line(optY, buf, fg, bg); optY += LINE_H_P3;
+    }
+    if (invertDisplay) c3Line(optY, "D Dark Theme", fg, bg);
 #elif defined(TARGET_EPAPER)
-    // Full frame: show header + model options
     tft.beginFrame();
     tft.epd.fillScreen(GxEPD_WHITE);
     tft.u8g2.setFont(EPD_FONT);
@@ -2324,16 +2347,10 @@ void showModelChoices(bool sessionAvail = false) {
     tft.u8g2.print("Select AI model:");
     {
         int optY = 3 * LINE_H_LARGE;
-        const char* opts[] = {
-            "1 Gemini 3.1 Flash Lite",
-            "2 Gemini 3 Flash",
-            "3 Gemini 3.1 Pro",
-            "4 Grok 4.1 Fast",
-            "5 Groq OSS-120b"
-        };
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < NUM_MODELS; i++) {
+            snprintf(buf, sizeof(buf), "%c %s", MODEL_DEFS[i].key, MODEL_DEFS[i].name);
             tft.u8g2.setCursor(2, optY + EPD_FONT_ASCENT);
-            tft.u8g2.print(opts[i]);
+            tft.u8g2.print(buf);
             optY += LINE_H_LARGE;
         }
         if (sessionAvail) {
@@ -2344,36 +2361,25 @@ void showModelChoices(bool sessionAvail = false) {
     tft.endFrame();
 #elif defined(TARGET_C3)
     int optY = 2 * LINE_H_LARGE;
-    c3Line(optY, "1 Gemini 3.1 Flash Lite", fg, bg); optY += LINE_H_LARGE;
-    c3Line(optY, "2 Gemini 3 Flash",   fg, bg); optY += LINE_H_LARGE;
-    c3Line(optY, "3 Gemini 3.1 Pro",   fg, bg); optY += LINE_H_LARGE;
-    c3Line(optY, "4 Grok 4.1 Fast",    fg, bg); optY += LINE_H_LARGE;
-    c3Line(optY, "5 Groq OSS-120b",    fg, bg); optY += LINE_H_LARGE;
-    if (invertDisplay)
-        c3Line(optY, "D Dark Theme",   fg, bg);
+    for (int i = 0; i < NUM_MODELS; i++) {
+        snprintf(buf, sizeof(buf), "%c %s", MODEL_DEFS[i].key, MODEL_DEFS[i].name);
+        c3Line(optY, buf, fg, bg); optY += LINE_H_LARGE;
+    }
+    if (invertDisplay) c3Line(optY, "D Dark Theme", fg, bg);
 #else
     uiFontOn();
     tft.setTextColor(fg, bg);
-    int optY = 2 * TXT_H + 4;  // start below the two header lines
-    tft.drawString("1 Gemini 3.1 Flash Lite", 2, optY); optY += TXT_H;
-    tft.drawString("2 Gemini 3 Flash",   2, optY); optY += TXT_H;
-    tft.drawString("3 Gemini 3.1 Pro",   2, optY); optY += TXT_H;
-    tft.drawString("4 Grok 4.1 Fast",    2, optY); optY += TXT_H;
-    tft.drawString("5 Groq OSS-120b",    2, optY); optY += TXT_H;
-    if (invertDisplay)
-        tft.drawString("D Dark Theme",   2, optY);
+    int optY = 2 * TXT_H + 4;
+    for (int i = 0; i < NUM_MODELS; i++) {
+        snprintf(buf, sizeof(buf), "%c %s", MODEL_DEFS[i].key, MODEL_DEFS[i].name);
+        tft.drawString(buf, 2, optY); optY += TXT_H;
+    }
+    if (invertDisplay) tft.drawString("D Dark Theme", 2, optY);
     uiFontOff();
 #endif
 }
 
 void selectModel() {
-    static const char* modelIds[]    = {
-        "gemini-3.1-flash-lite-preview",
-        "gemini-3-flash-preview",
-        "gemini-3.1-pro-preview"
-    };
-    static const bool  modelGlobal[] = { true, true, false };
-
 #ifdef TARGET_EPAPER
     bool sessionAvail = halIsDeepSleepWake();
 #else
@@ -2387,79 +2393,39 @@ void selectModel() {
         if (ev.type != INPUT_CHAR) continue;
         char ch = ev.ch;
 
-        // Models 1–3 (Gemini); P3 only uses model 1
-        if (ch >= '1' && ch <= '3'
+        // Check model keys against table
+        for (int i = 0; i < NUM_MODELS; i++) {
+            if (ch != MODEL_DEFS[i].key) continue;
 #ifdef TARGET_P3
-            && ch == '1'
+            if (!MODEL_DEFS[i].p3) continue;  // key not offered on P3
 #endif
-        ) {
-            int i = ch - '1';
             halClickSound();
-            strncpy(GEMINI_MODEL, modelIds[i], 47); GEMINI_MODEL[47] = '\0';
-            geminiUseGlobal = modelGlobal[i];
-            useGrok = false; useGroq = false;
+            const ModelDef& m = MODEL_DEFS[i];
+            if (m.apiId) {
+                strlcpy(GEMINI_MODEL, m.apiId, sizeof(GEMINI_MODEL));
+                geminiUseGlobal = m.global;
+                useGrok = false; useGroq = false;
+            } else {
+                useGrok = m.isGrok; useGroq = m.isGroq;
+            }
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
             tft.fillRect(0, 0, SCREEN_W, clearH, bg);
 #ifdef TARGET_C3
-            c3Line(0,              "CRACK: Cheap Remote AI Chat Keyboard", TFT_GREEN,    bg);
-            c3Line(LINE_H_P3,      GEMINI_MODEL,             TFT_GREEN,    bg);
-            c3Line(2 * LINE_H_P3,  "Ready.",                 TFT_DARKGREY, bg);
+            c3Line(0,             "CRACK: Cheap Remote AI Chat Keyboard", TFT_GREEN,    bg);
+            c3Line(LINE_H_P3,     m.name,                                 TFT_GREEN,    bg);
+            c3Line(2*LINE_H_P3,   "Ready.",                               TFT_DARKGREY, bg);
 #else
             uiFontOn();
             tft.setTextColor(TFT_GREEN, bg);
             tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
-            tft.drawString(GEMINI_MODEL, 2, LINE_H_LARGE);
+            tft.drawString(m.name, 2, LINE_H_LARGE);
             tft.setTextColor(TFT_DARKGREY, bg);
             tft.drawString("Ready.", 2, 2 * LINE_H_LARGE);
             uiFontOff();
 #endif
             return;
         }
-        if (ch == '4') {
-            halClickSound();
-            useGrok = true; useGroq = false;
-            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-            int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
-            tft.fillRect(0, 0, SCREEN_W, clearH, bg);
-#ifdef TARGET_C3
-            c3Line(0,              "CRACK: Cheap Remote AI Chat Keyboard", TFT_GREEN,    bg);
-            c3Line(LINE_H_P3,      "Grok 4.1 Fast",          TFT_GREEN,    bg);
-            c3Line(2 * LINE_H_P3,  "Ready.",                 TFT_DARKGREY, bg);
-#else
-            uiFontOn();
-            tft.setTextColor(TFT_GREEN, bg);
-            tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
-            tft.drawString("Grok 4.1 Fast", 2, LINE_H_LARGE);
-            tft.setTextColor(TFT_DARKGREY, bg);
-            tft.drawString("Ready.", 2, 2 * LINE_H_LARGE);
-            uiFontOff();
-#endif
-            return;
-        }
-#ifndef TARGET_P3
-        if (ch == '5') {
-            halClickSound();
-            useGroq = true; useGrok = false;
-            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-            int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
-            tft.fillRect(0, 0, SCREEN_W, clearH, bg);
-#ifdef TARGET_C3
-            c3Line(0,              "CRACK: Cheap Remote AI Chat Keyboard", TFT_GREEN,    bg);
-            c3Line(LINE_H_P3,      "Groq GPT-OSS-120b",      TFT_GREEN,    bg);
-            c3Line(2 * LINE_H_P3,  "Ready.",                 TFT_DARKGREY, bg);
-#else
-            uiFontOn();
-            tft.setTextColor(TFT_GREEN, bg);
-            tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
-            tft.drawString("Groq GPT-OSS-120b", 2, LINE_H_LARGE);
-            tft.setTextColor(TFT_DARKGREY, bg);
-            tft.drawString("Ready.", 2, 2 * LINE_H_LARGE);
-            uiFontOff();
-#endif
-            return;
-        }
-#endif // !TARGET_P3
 #ifdef TARGET_EPAPER
         if (ch == 'r' || ch == 'R') {
             if (loadSession()) {

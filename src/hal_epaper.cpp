@@ -409,7 +409,7 @@ void halInit() {
     tft.u8g2.setCursor(6, EPD_FONT_ASCENT + 2);  // +2px so title sits clear of the top edge
     tft.u8g2.print("CRACK: Cheap Remote AI Chat Keyboard");
     drawBootLine(2, "Chat commands:");
-    drawBootLine(3, "more (or ctrl-M) / new (or ctrl-N) / menu");
+    drawBootLine(3, "more (or Enter) / new (or ctrl-N) / menu");
 
     drawBootLine(5, "Keyboard connection...");
     drawBootLine(6, hasBonded ? "Tap any key to wake keyboard" : "");
