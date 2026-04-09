@@ -207,7 +207,7 @@ static void reconnectTask(void*) {
         setupScan();
         NimBLEScan* scan = NimBLEDevice::getScan();
         wantConnect = false;
-        scan->start(0, false);
+        scan->start(10, false);  // 10s timed scan; NimBLE flushes buffers on completion
         for (int i = 0; i < 100 && !connected && !wantConnect; i++) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
@@ -367,10 +367,8 @@ static void setupScan() {
     scan->setScanCallbacks(&gScanCB, false);
     // Passive scan: no SCAN_REQ Tx, just listen. Keyboards advertise UUID in the adv packet.
     scan->setActiveScan(false);
-    // Continuous scan (window == interval): catches first KB advertisement immediately after wake.
-    // Previous 2% duty cycle (20ms/1s) took ~6s to find KB after it started advertising.
-    scan->setInterval(160); // 100 ms (units of 0.625 ms)
-    scan->setWindow(160);   // 100 ms — continuous
+    scan->setInterval(320); // 200 ms (units of 0.625 ms)
+    scan->setWindow(96);    //  60 ms — 30% duty cycle; leaves radio time for WiFi
 }
 
 // --- halInit ---
@@ -394,25 +392,6 @@ void halInit() {
 
     bondedAddr = loadBondedAddress(hasBonded);
     EPD_LOG("[EPD BLE] hasBonded=%d\n", hasBonded);
-
-    // On deep sleep wake: skip full boot screen and blocking BLE scan.
-    // The reconnect task runs in the background; keyboard reconnects on first keypress.
-    if (halIsDeepSleepWake()) {
-        // BLE reconnect task is started later via halStartBleReconnect(), called from setup()
-        // after WiFi connects. Starting BLE scan here would race with WiFi association on the
-        // ESP32-C3's shared radio and prevent WiFi from connecting.
-        EPD_LOG("%s\n", "[EPD BLE] Deep sleep wake — skipping boot screen, deferring BLE scan");
-        const int lineH = FONT_LINE_H;
-        tft.beginPartialFrame(0, 0, tft.epd.width(), lineH);
-        tft.epd.fillRect(0, 0, tft.epd.width(), lineH, GxEPD_BLACK);
-        tft.u8g2.setFont(EPD_FONT);
-        tft.u8g2.setForegroundColor(GxEPD_WHITE);
-        tft.u8g2.setBackgroundColor(GxEPD_BLACK);
-        tft.u8g2.setCursor(6, EPD_FONT_ASCENT + 2);
-        tft.u8g2.print("CRACK: Cheap Remote AI Chat Keyboard");
-        tft.endFrame();
-        return;
-    }
 
     // Render help text + "Keyboard connection..." + initial status in one full frame.
     // Drawing all static rows together avoids the ~500ms per-row partial refresh delay.
@@ -573,23 +552,13 @@ void halSleepIdle() {
 }
 
 void halDeepSleep() {
-    // Light sleep: very low current (~1-2mA). BLE radio clock is gated so the keyboard
-    // disconnects, but reconnectTask re-scans automatically on wake using continuous scan
-    // (setInterval/setWindow=160) so the keyboard reconnects quickly.
-    // Only GPIO9 (BOOT) wakes the device.
-    gpio_set_direction(GPIO_NUM_9, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(GPIO_NUM_9, GPIO_PULLUP_ONLY);
-    gpio_wakeup_enable(GPIO_NUM_9, GPIO_INTR_LOW_LEVEL);
-    esp_sleep_enable_gpio_wakeup();
-    // Disconnect cleanly before sleep: clears NimBLE's internal connection state so it can
-    // scan immediately on wake rather than spending seconds cleaning up a stale connection.
-    // This also makes the keyboard start advertising immediately (it sees the disconnect).
-    if (bleClient && bleClient->isConnected()) {
-        bleClient->disconnect();
-    }
-    connected = false;
-    esp_light_sleep_start();
-    // FreeRTOS resumes here. NimBLE is already in clean disconnected state; reconnectTask scans.
+    // Deep sleep: lowest power. GPIO0 pulled LOW wakes the device (internal pull-up enabled).
+    // GPIO0 is RTC-capable on C3 (GPIOs 0-5 only) so deep sleep GPIO wakeup works here.
+    // Does NOT return — chip reboots on wake; halIsDeepSleepWake() returns true in setup().
+    gpio_set_direction(GPIO_NUM_0, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(GPIO_NUM_0, GPIO_PULLUP_ONLY);
+    esp_deep_sleep_enable_gpio_wakeup(1ULL << GPIO_NUM_0, ESP_GPIO_WAKEUP_GPIO_LOW);
+    esp_deep_sleep_start();
 }
 
 #endif // TARGET_EPAPER

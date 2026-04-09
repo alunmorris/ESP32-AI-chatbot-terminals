@@ -304,7 +304,7 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define API_WAIT_FIRST_MS  4000    // ms before first waiting message appears
 
 #define WIFI_IDLE_TIMEOUT_MS    60000    // 60 seconds
-#define DEEP_SLEEP_TIMEOUT_MS  110000    //DEBUG 30 sec. 5 minutes idle → deep sleep (TARGET_EPAPER only)
+#define DEEP_SLEEP_TIMEOUT_MS  61000    //DEBUG 61 sec. → deep sleep (TARGET_EPAPER only)
 unsigned long lastActivityMs = 0;      // Tracks the last time the user pressed a key
 
 // --- WiFi RSSI thresholds for LED colour ---
@@ -859,7 +859,7 @@ void drawHistory() {
             tft.u8g2.setForegroundColor(GxEPD_WHITE);
             tft.u8g2.setBackgroundColor(GxEPD_BLACK);
             tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
-            tft.u8g2.print("Sleeping... press BOOT to wake");
+            tft.u8g2.print("Sleeping... press WAKE to wake");
             tft.u8g2.setForegroundColor(GxEPD_BLACK);
             tft.u8g2.setBackgroundColor(GxEPD_WHITE);
         } else {
@@ -2061,7 +2061,13 @@ String callGroq(const char* prompt) {
         // reqDoc and body freed here
     }
 
+    // Reserve response buffer — avoids realloc fragmentation under heap pressure
     String fullResp;
+    {
+        size_t avail = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        const size_t RESP_CAP = (avail > 5120) ? min((size_t)6144, avail - 1024) : 0;
+        if (RESP_CAP > 0) fullResp.reserve(RESP_CAP);
+    }
     uint8_t rbuf[256];
     unsigned long deadline  = millis() + API_TIMEOUT_MS;
     unsigned long nextMsgMs = millis() + API_WAIT_FIRST_MS;
@@ -2103,7 +2109,6 @@ String callGroq(const char* prompt) {
 
     int jsonStart = fullResp.indexOf('{');
     if (jsonStart < 0) return "ERR: no JSON in response";
-    Serial.println("[Groq] JSON body: " + fullResp.substring(jsonStart, jsonStart + 400));
 
     if (httpStatus != 200) {
         char buf[80];
@@ -2111,9 +2116,13 @@ String callGroq(const char* prompt) {
         return String(buf);
     }
 
+    // Filter: only extract fields we need — avoids allocating full JSON tree under heap pressure
+    JsonDocument filter;
+    filter["choices"][0]["message"]["content"] = true;
+    filter["error"]["message"] = true;
     JsonDocument respDoc;
-    if (deserializeJson(respDoc, fullResp.c_str() + jsonStart) != DeserializationError::Ok) {
-        Serial.println("Bad JSON: " + fullResp.substring(jsonStart, jsonStart + 200));
+    if (deserializeJson(respDoc, fullResp.c_str() + jsonStart,
+                        DeserializationOption::Filter(filter)) != DeserializationError::Ok) {
         return "ERR: JSON parse failed";
     }
 
@@ -2226,7 +2235,74 @@ static void c3Line(int y, const char* text, uint16_t col, uint16_t bg) {
 }
 #endif
 
-void showModelChoices() {
+#ifdef TARGET_EPAPER
+// --- Session persistence (NVS/Preferences) ---
+// Namespaces: "session" (model/flags/count) and "sess_h" (per-message text+flags).
+// NVS partition is 20KB; cap at 4 messages (4×3KB text ≈ 12KB + overhead).
+
+static void saveSession() {
+    int saveCount = min(historyCount, 4);
+    Preferences meta;
+    meta.begin("session", false);
+    meta.putString("model",  GEMINI_MODEL);
+    meta.putBool("global",   geminiUseGlobal);
+    meta.putBool("grok",     useGrok);
+    meta.putBool("groq",     useGroq);
+    meta.putUChar("count",   (uint8_t)saveCount);
+    meta.end();
+
+    Preferences hist;
+    hist.begin("sess_h", false);
+    hist.clear();
+    int base = historyCount - saveCount;
+    for (int i = 0; i < saveCount; i++) {
+        char tk[4], fk[4];
+        snprintf(tk, sizeof(tk), "t%d", i);
+        snprintf(fk, sizeof(fk), "f%d", i);
+        hist.putString(tk, history[base + i].text);
+        uint8_t fl = (history[base + i].isUser      ? 1 : 0)
+                   | (history[base + i].isError     ? 2 : 0)
+                   | (history[base + i].displayOnly ? 4 : 0);
+        hist.putUChar(fk, fl);
+    }
+    hist.end();
+}
+
+static bool loadSession() {
+    Preferences meta;
+    meta.begin("session", true);
+    if (!meta.isKey("count")) { meta.end(); return false; }
+    strlcpy(GEMINI_MODEL, meta.getString("model", "").c_str(), sizeof(GEMINI_MODEL));
+    geminiUseGlobal = meta.getBool("global", false);
+    useGrok         = meta.getBool("grok",   false);
+    useGroq         = meta.getBool("groq",   false);
+    int count       = (int)meta.getUChar("count", 0);
+    meta.end();
+    if (count == 0) return false;
+
+    Preferences hist;
+    hist.begin("sess_h", true);
+    historyCount = 0;
+    for (int i = 0; i < count && historyCount < MAX_MESSAGES; i++) {
+        char tk[4], fk[4];
+        snprintf(tk, sizeof(tk), "t%d", i);
+        snprintf(fk, sizeof(fk), "f%d", i);
+        String text = hist.getString(tk, "");
+        if (text.isEmpty()) break;
+        strlcpy(history[historyCount].text, text.c_str(), sizeof(history[historyCount].text));
+        uint8_t fl = hist.getUChar(fk, 0);
+        history[historyCount].isUser      = (fl & 1) != 0;
+        history[historyCount].isError     = (fl & 2) != 0;
+        history[historyCount].displayOnly = (fl & 4) != 0;
+        historyCount++;
+    }
+    hist.end();
+    rebuildLines();
+    return historyCount > 0;
+}
+#endif // TARGET_EPAPER
+
+void showModelChoices(bool sessionAvail = false) {
     uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
     uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
 #ifdef TARGET_P3
@@ -2259,6 +2335,10 @@ void showModelChoices() {
             tft.u8g2.setCursor(2, optY + EPD_FONT_ASCENT);
             tft.u8g2.print(opts[i]);
             optY += LINE_H_LARGE;
+        }
+        if (sessionAvail) {
+            tft.u8g2.setCursor(2, optY + EPD_FONT_ASCENT);
+            tft.u8g2.print("R Resume last session");
         }
     }
     tft.endFrame();
@@ -2294,7 +2374,12 @@ void selectModel() {
     };
     static const bool  modelGlobal[] = { true, true, false };
 
-    showModelChoices();
+#ifdef TARGET_EPAPER
+    bool sessionAvail = halIsDeepSleepWake();
+#else
+    bool sessionAvail = false;
+#endif
+    showModelChoices(sessionAvail);
 
     while (true) {
         InputEvent ev;
@@ -2375,6 +2460,17 @@ void selectModel() {
             return;
         }
 #endif // !TARGET_P3
+#ifdef TARGET_EPAPER
+        if (ch == 'r' || ch == 'R') {
+            if (loadSession()) {
+                epdMsgPending = true;
+                epdShowModel  = false;
+                drawHistory();
+                return;
+            }
+            continue;
+        }
+#endif
         if (ch == 'd' || ch == 'D') {
             invertDisplay = !invertDisplay;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
@@ -2389,7 +2485,7 @@ void selectModel() {
             tft.drawString("Select AI model:",       2, 2 * TXT_H + 4);
             uiFontOff();
 #endif
-            showModelChoices();
+            showModelChoices(sessionAvail);
             continue;
         }
 #ifndef TARGET_C3
@@ -2401,7 +2497,7 @@ void selectModel() {
             tft.drawString("Select AI model:",       2, 2 * TXT_H);
             uiFontOff();
             drawKeyboard();
-            drawInputBar(); showModelChoices();
+            drawInputBar(); showModelChoices(sessionAvail);
             continue;
         }
 #endif
@@ -2443,6 +2539,15 @@ void setup() {
 #endif
     waitMsgIdx = random(NUM_WAIT_MSGS);
     // Display (init before backlight to avoid white flash)
+#ifdef TARGET_EPAPER
+    if (halIsDeepSleepWake()) {
+        // Wake display from hardware deep sleep (tft.epd.hibernate() was called before sleep).
+        // Toggle RST to restart the controller before GxEPD2 init.
+        pinMode(EPD_RST, OUTPUT);
+        digitalWrite(EPD_RST, LOW);  delay(10);
+        digitalWrite(EPD_RST, HIGH); delay(10);
+    }
+#endif
     tft.init();
 #ifdef TARGET_EPAPER
     tft.setRotation(1);  // landscape (250 wide × 122 tall)
@@ -2490,17 +2595,18 @@ void setup() {
     tft.fillScreen(TFT_WHITE);
 #endif
     bool wifiOk = connectWiFi(wifiSsid[0], wifiPass[0], true);
+
+    // Deep sleep wake: start BLE reconnect task immediately after WiFi connects, so BLE scan
+    // runs concurrently with the splash delay rather than after it. Reduces KB reconnect latency.
+    // On normal boot halInit() has already connected BLE; this is a no-op (reconnectTaskHandle set).
+    halStartBleReconnect();
+
     // Splash visible for at least 3 seconds
     long splashRemain = 3000L - (long)(millis() - splashStart);
     if (splashRemain > 0) delay(splashRemain);
 #ifndef TARGET_EPAPER
     tft.fillScreen(invertDisplay ? COL_INVERT_BG : COL_BG);  // clear splash
 #endif
-
-    // Deep sleep wake: start BLE reconnect task now. WiFi connect attempt is done, so no radio
-    // contention. Must start BEFORE selectAP() so keyboard is available for AP/password input.
-    // On normal boot halInit() has already connected BLE; this is a no-op (reconnectTaskHandle set).
-    halStartBleReconnect();
 
     if (!wifiOk) {
         selectAP();  // scan → pick AP → enter password → connect; returns only on success
@@ -2799,10 +2905,12 @@ do_model_menu:
             WiFi.mode(WIFI_OFF);
             wifiHealthy = false;
         }
-        halDeepSleep();          // blocks until key or BOOT; BLE stays connected via vTaskDelay
-        epdSleeping   = false;
+        saveSession();           // persist model + last 4 messages to NVS before power-off
+        tft.epd.hibernate();     // put display into hardware deep sleep (lowest power)
+        halDeepSleep();          // deep sleep — does not return; wake reboots via setup()
+        epdSleeping   = false;   // unreachable; here in case halDeepSleep() is stubbed
         lastActivityMs = millis();
-        drawInputBar();          // partial refresh only: clear sleep message (~500ms)
+        drawInputBar();
     }
 #endif
     delay(20);
