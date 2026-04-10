@@ -57,6 +57,7 @@ void pollKBHide();
 void halBeforeApiCall();
 void halAfterApiCall();
 
+
 //030426 for power saving (no-op on standard espressif32; pioarduino builds use tickless idle)
 void halSleepIdle();
 

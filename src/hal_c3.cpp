@@ -445,6 +445,7 @@ void halInit() {
 // Keep BLE connected — just give WiFi radio priority during TLS.
 // BLE link survives (may be laggy) and resumes immediately after.
 void halBeforeApiCall() {
+    setCpuFrequencyMhz(160);  // TLS crypto is CPU-bound; 160 MHz halves handshake time
     if (reconnectTaskHandle) vTaskSuspend(reconnectTaskHandle);
     NimBLEDevice::getScan()->stop();
     esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
@@ -457,6 +458,7 @@ void halAfterApiCall() {
     esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
     Serial.printf("[BLE] after API: heap=%u\n", ESP.getFreeHeap());
     if (reconnectTaskHandle) vTaskResume(reconnectTaskHandle);
+    setCpuFrequencyMhz(80);   // back to low-power idle
 }
 
 // --- No-op stubs ---

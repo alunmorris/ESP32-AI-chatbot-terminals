@@ -518,6 +518,7 @@ void halInit() {
 // --- BLE coexistence around API calls ---
 // Give WiFi radio priority during TLS; BLE link survives (may be briefly laggy).
 void halBeforeApiCall() {
+    setCpuFrequencyMhz(160);  // TLS crypto is CPU-bound; 160 MHz halves handshake time
     if (reconnectTaskHandle) vTaskSuspend(reconnectTaskHandle);
     NimBLEDevice::getScan()->stop();
     esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
@@ -530,6 +531,7 @@ void halAfterApiCall() {
     esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
     EPD_LOG("[Power] after API: Coex Balance. Heap=%u\n", ESP.getFreeHeap());
     if (reconnectTaskHandle) vTaskResume(reconnectTaskHandle);
+    setCpuFrequencyMhz(80);   // back to low-power idle
 }
 
 // Start BLE reconnect task after WiFi is up (deep sleep wake path only).
