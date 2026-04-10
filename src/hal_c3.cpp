@@ -1,5 +1,6 @@
 // hal_c3.cpp — ESP32-C3 Supermini: NimBLE BLE HID host keyboard input
 // No LED, no speaker, no touch.
+// 090426 BLE: scan duty cycle 30% (320/96); reconnectTask timed 10s scan (NimBLE buffer flush)
 // 010426 BLE: fast retry loop (3x/200ms) replaces 1.5s sleep; scan duration 0 (indefinite); remove canNotify() guard
 // 010426 halInit: proceed to UI after Phase 1 if hasBonded; reconnectTask handles background reconnect
 // 310326 WiFi power save: PS_NONE during API calls, MAX_MODEM idle; BLE coex preference
@@ -170,7 +171,7 @@ static void reconnectTask(void*) {
         setupScan();
         NimBLEScan* scan = NimBLEDevice::getScan();
         wantConnect = false;
-        scan->start(0, false);
+        scan->start(10, false);  // 10s timed; NimBLE flushes buffers on completion
         for (int i = 0; i < 100 && !connected && !wantConnect; i++) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
@@ -324,8 +325,8 @@ static void setupScan() {
     NimBLEScan* scan = NimBLEDevice::getScan();
     scan->setScanCallbacks(&gScanCB, false);
     scan->setActiveScan(true);
-    scan->setInterval(160);  // 100 ms interval (units of 0.625 ms)
-    scan->setWindow(160);    // 100 ms window  → 100% duty cycle
+    scan->setInterval(320);  // 200 ms interval (units of 0.625 ms)
+    scan->setWindow(96);     //  60 ms window  → 30% duty cycle; leaves radio time for WiFi
 }
 
 // --- halInit ---

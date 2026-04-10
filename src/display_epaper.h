@@ -16,13 +16,32 @@
 #define EPD_DC    1
 #define EPD_RST   2
 #define EPD_BUSY  3
-#define EPD_MISO  5   // dummy — prevents SPI library crash
+#define EPD_PWR_EN_L 5  // active-low display power enable (P-FET/load switch gate; LOW=on, HIGH=off)
 
-// --- Font metrics for u8g2_font_helvB08_tf ---
-#define EPD_FONT            u8g2_font_helvB08_tf   // AI text (bold upright)
-#define EPD_FONT_USER       u8g2_font_luBIS08_tf   // user text italic. No Helv italic.
-#define EPD_FONT_ASCENT     8    // pixels above baseline for cap letters (ascent_A = 8)
-#define FONT_LINE_H        13    // line spacing: max char height 13 (ascent 11 + descent 2), zero leading
+// --- Display size selection (comment out one) ---
+//#define EPD_SIZE_250x122   // WeAct 2.13" GDEY0213B74 250×122 landscape
+#define EPD_SIZE_200x200   // WeAct 1.54" GDEY0154D67 200×200
+
+#ifdef EPD_SIZE_250x122
+#  define EPD_WIDTH  250
+#  define EPD_HEIGHT 122
+#else
+#  define EPD_WIDTH  200
+#  define EPD_HEIGHT 200
+#endif
+
+// --- Font selection (larger font for higher-DPI 200×200 panel) ---
+#ifdef EPD_SIZE_250x122
+#  define EPD_FONT          u8g2_font_helvB08_tf   // AI text (bold upright)
+#  define EPD_FONT_USER     u8g2_font_luBIS08_tf   // user text italic
+#  define EPD_FONT_ASCENT   8    // pixels above baseline (ascent_A)
+#  define FONT_LINE_H      13    // max char height 13 (ascent 11 + descent 2)
+#else
+#  define EPD_FONT          u8g2_font_helvB10_tf   // AI text — larger for 200×200 DPI
+#  define EPD_FONT_USER     u8g2_font_luBIS10_tf   // user text italic
+#  define EPD_FONT_ASCENT  10    // pixels above baseline (ascent_A)
+#  define FONT_LINE_H      16    // max char height 16 (ascent 13 + descent 3)
+#endif
 
 // --- Refresh rate limit ---
 // Full refresh cycles through all pixels (~1700 ms, higher voltage) and ages the panel.
@@ -56,7 +75,11 @@
 
 class EpaperDisplay {
 public:
+#ifdef EPD_SIZE_250x122
     GxEPD2_BW<GxEPD2_213_GDEY0213B74, GxEPD2_213_GDEY0213B74::HEIGHT> epd;
+#else
+    GxEPD2_BW<GxEPD2_154_GDEY0154D67, GxEPD2_154_GDEY0154D67::HEIGHT> epd;
+#endif
     U8G2_FOR_ADAFRUIT_GFX u8g2;
 
 private:
@@ -77,12 +100,16 @@ private:
 
 public:
     EpaperDisplay()
+#ifdef EPD_SIZE_250x122
         : epd(GxEPD2_213_GDEY0213B74(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY)) {}
+#else
+        : epd(GxEPD2_154_GDEY0154D67(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY)) {}
+#endif
 
     // --- Lifecycle ---
 
     void init(uint32_t baud = 0, bool initial = true) {
-        SPI.begin(EPD_SCK, EPD_MISO, EPD_MOSI, EPD_CS);
+        SPI.begin(EPD_SCK, -1, EPD_MOSI, EPD_CS);  // MISO unused (write-only display)
         epd.init(baud, initial);
         u8g2.begin(epd);
         u8g2.setFont(EPD_FONT);

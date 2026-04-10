@@ -54,6 +54,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_wifi.h>  // esp_wifi_set_ps() — WIFI_PS_MAX_MODEM / WIFI_PS_NONE
+#include <driver/gpio.h>  // gpio_hold_en() / gpio_hold_dis() for deep sleep pin latch
 #include <ArduinoJson.h>
 #ifndef TARGET_C3
 #include <ESP32Ping.h>
@@ -166,8 +167,8 @@ void clearWifiPass(const char* ssid) {
 #  define SCREEN_W      284   // ST7789P3 display module (part no.), 284×76 landscape, ESP32-C3
 #  define SCREEN_H       76
 #elif defined(TARGET_EPAPER)
-#  define SCREEN_W      250   // GDEY0213B74 250×122 landscape
-#  define SCREEN_H      122
+#  define SCREEN_W      EPD_WIDTH   // set by EPD_SIZE_xxx in display_epaper.h
+#  define SCREEN_H      EPD_HEIGHT
 #else
 #  define SCREEN_W      320
 #  define SCREEN_H      240
@@ -321,7 +322,7 @@ unsigned long lastActivityMs = 0;      // Tracks the last time the user pressed 
 #define GROQ_MODEL        "openai/gpt-oss-120b"
 
 // --- AI system prompt ---
-// Word limit varies by display size: e-paper (250×122) fits fewer lines than TFT (320×240).
+// Word limit varies by display size: e-paper (200×200) fits fewer lines than TFT (320×240).
 #ifdef TARGET_EPAPER
 #  define AI_MAX_WORDS_STR "80"
 #else
@@ -464,7 +465,7 @@ static void drawWifiIcon(TFT_eSprite& spr, int cx, int cy, uint16_t color, uint1
 // Rows numbered 1–apCount starting at y=AP_ROW_H (row 0 = header).
 void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
 #ifdef TARGET_EPAPER
-    // Compact AP list for 250×122. Header row + up to 8 APs at 12 px each.
+    // Compact AP list for 200×200. Header row + up to 8 APs at 12 px each.
     tft.beginFrame();
     tft.epd.fillScreen(GxEPD_WHITE);
     tft.u8g2.setFont(EPD_FONT);
@@ -472,7 +473,7 @@ void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
     tft.u8g2.setBackgroundColor(GxEPD_WHITE);
     tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
     tft.u8g2.print("Select WiFi network:");
-    int maxAPs = min(apCount, 8);   // 8 × 12 px + 12 px header = 108 px < 122 px
+    int maxAPs = min(apCount, (SCREEN_H - 12) / 12);  // header=12px, each AP=12px
     for (int i = 0; i < maxAPs; i++) {
         char line[64];
         snprintf(line, sizeof(line), "%d. %s  %s", i + 1, apSsids[i], rssiToBars(apRssi[i]));
@@ -778,8 +779,8 @@ void drawHistory() {
 #ifdef TARGET_EPAPER
     // No heading row. Input row fixed at screen bottom: inputY = SCREEN_H - lineH.
     // histSlots = number of chat rows that fit above the input row.
-    const int inputY = SCREEN_H - lineH;   // 109 on 122 px display with lineH=13
-    histSlots = inputY / lineH;             // 8 rows (y=0,13,26,...,91)
+    const int inputY = SCREEN_H - lineH;   // bottom input row
+    histSlots = inputY / lineH;             // chat rows above input
 #endif
     int firstIdx = lineCount - histSlots - scrollOffset;
     if (firstIdx < 0) firstIdx = 0;
@@ -2506,6 +2507,11 @@ void setup() {
     waitMsgIdx = random(NUM_WAIT_MSGS);
     // Display (init before backlight to avoid white flash)
 #ifdef TARGET_EPAPER
+    // Power up display before init (on both cold boot and wake).
+    if (halIsDeepSleepWake()) gpio_hold_dis(GPIO_NUM_5);  // release latch set before deep sleep
+    pinMode(EPD_PWR_EN_L, OUTPUT);
+    digitalWrite(EPD_PWR_EN_L, LOW);   // enable display power (active low)
+    delay(10);                          // let rail stabilise
     if (halIsDeepSleepWake()) {
         // Wake display from hardware deep sleep (tft.epd.hibernate() was called before sleep).
         // Toggle RST to restart the controller before GxEPD2 init.
@@ -2873,6 +2879,8 @@ do_model_menu:
         }
         saveSession();           // persist model + last 4 messages to NVS before power-off
         tft.epd.hibernate();     // put display into hardware deep sleep (lowest power)
+        digitalWrite(EPD_PWR_EN_L, HIGH);  // cut display power (P-FET off)
+        gpio_hold_en(GPIO_NUM_5);           // latch HIGH during deep sleep (GPIO5 is RTC-capable)
         halDeepSleep();          // deep sleep — does not return; wake reboots via setup()
         epdSleeping   = false;   // unreachable; here in case halDeepSleep() is stubbed
         lastActivityMs = millis();
