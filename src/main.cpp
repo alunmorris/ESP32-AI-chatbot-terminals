@@ -671,21 +671,41 @@ void drawInputBar() {
     }
 }
 
-// --- Conversation history ---
-struct Message {
-    bool   isUser;
-    bool   isError;
-    bool   displayOnly;  // true = show in chat but never sent to AI
-    char   text[3072];
+// --- Conversation history (linked list) ---
+// Each node allocates only strlen(text)+1 bytes for text, so short messages
+// cost little heap and many more turns fit vs. a fixed 3KB-per-slot array.
+struct HistoryNode {
+    HistoryNode* next;
+    bool  isUser;
+    bool  isError;
+    bool  displayOnly;  // true = show in chat but never sent to AI
+    char  text[];       // flexible array — allocated as sizeof(HistoryNode)+len+1
 };
+// Budget: total text bytes to keep in heap. Leave ample room for TLS (~35KB) + BLE (~30KB).
+#define HISTORY_TEXT_MAX    3071    // max text per message (unchanged)
+#define HISTORY_HEAP_BUDGET 20000   // max total text bytes across all nodes
 
-#ifdef TARGET_C3
-static const int  MAX_MESSAGES = 6;    // 6×3KB=18KB static; leaves heap for TLS+BLE+response buffer
-#else
-static const int  MAX_MESSAGES = 20;
-#endif
-Message           history[MAX_MESSAGES];
-int               historyCount = 0;
+static HistoryNode* historyHead  = nullptr;
+static HistoryNode* historyTail  = nullptr;
+static int          historyCount = 0;
+static int          historyBytes = 0;  // running sum of strlen(text) across all nodes
+
+static HistoryNode* historyGet(int idx) {   // O(n) index; n is small
+    HistoryNode* n = historyHead;
+    for (int i = 0; i < idx && n; i++) n = n->next;
+    return n;
+}
+static void historyEvict() {    // remove oldest single node
+    if (!historyHead) return;
+    HistoryNode* old = historyHead;
+    historyHead = old->next;
+    if (!historyHead) historyTail = nullptr;
+    historyBytes -= (int)strlen(old->text);
+    free(old);
+    historyCount--;
+}
+static void historyClear() { while (historyHead) historyEvict(); }
+int historyCount_get() { return historyCount; }  // extern-visible alias if needed
 
 // Rendered line cache
 #ifdef TARGET_C3
@@ -701,11 +721,11 @@ int               scrollOffset = 0;       // lines scrolled up from bottom
 
 void rebuildLines() {
     lineCount = 0;
-    for (int m = 0; m < historyCount && lineCount < MAX_LINES - 2; m++) {
-        uint16_t col = history[m].isError ? COL_ERROR :
-                       history[m].isUser  ? COL_USER  : COL_AI;
-        bool isUser = history[m].isUser;
-        const char* full = history[m].text;
+    for (HistoryNode* m = historyHead; m && lineCount < MAX_LINES - 2; m = m->next) {
+        uint16_t col = m->isError ? COL_ERROR :
+                       m->isUser  ? COL_USER  : COL_AI;
+        bool isUser = m->isUser;
+        const char* full = m->text;
 
         {
             // Pixel-width word wrap using smooth font (DejaVuSansBold12px)
@@ -1017,75 +1037,76 @@ static bool supportedCodepoint(uint32_t cp) {
     return false;
 }
 
-void addMessage(bool isUser, bool isError, const char* text) {
-    if (historyCount >= MAX_MESSAGES) {
-        // Drop oldest two (user+AI pair)
-        memmove(history, history + 2, (MAX_MESSAGES - 2) * sizeof(Message));
-        historyCount -= 2;
-    }
-    history[historyCount].isUser       = isUser;
-    history[historyCount].isError      = isError;
-    history[historyCount].displayOnly  = false;
-    const int TMAX = (int)sizeof(history[historyCount].text) - 1;
-    strncpy(history[historyCount].text, text, TMAX);
-    history[historyCount].text[TMAX] = '\0';
-    // Sanitise: pass supported UTF-8 codepoints through unchanged.
-    // Strip C0 controls; normalise space-like and hyphen-like chars not in font;
-    // drop zero-width/invisible chars; replace remaining unsupported sequences with '?'.
+void addMessage(bool isUser, bool isError, const char* text, bool displayOnly = false) {
+    const int TMAX = HISTORY_TEXT_MAX;
+
+    // --- Sanitise into static buffer (never on stack; addMessage is not re-entrant) ---
+    // Write pointer is always <= read pointer: multi-byte sequences only shrink or stay same size.
+    static char sanBuf[TMAX + 1];
     {
-        const char* s = history[historyCount].text;
-        char tmp[sizeof(history[historyCount].text) + 4];
-        char* d   = tmp;
-        char* end = tmp + sizeof(tmp) - 4;
+        const char* s = text;
+        char*       d = sanBuf;
+        const char* end = sanBuf + TMAX;
         while (*s && d < end) {
             unsigned char c = (unsigned char)*s;
             if (c < 0x80) {
-                // ASCII
                 if (c == '\n' || (c >= 0x20 && c != 0x7F)) *d++ = (char)c;
                 s++;
             } else if ((c & 0xE0) == 0xC0) {
-                // 2-byte sequence
                 unsigned char b2 = (unsigned char)s[1];
                 if ((b2 & 0xC0) == 0x80) {
                     uint32_t cp = ((c & 0x1F) << 6) | (b2 & 0x3F);
-                    if (cp == 0x00AD) {
-                        /* U+00AD soft hyphen: drop silently */
-                    } else if (supportedCodepoint(cp)) { *d++ = (char)c; *d++ = (char)b2; }
-                    else                         *d++ = '?';
+                    if (cp == 0x00AD) { /* soft hyphen: drop */ }
+                    else if (supportedCodepoint(cp)) { *d++ = (char)c; *d++ = (char)b2; }
+                    else *d++ = '?';
                     s += 2;
                 } else { *d++ = '?'; s++; }
             } else if ((c & 0xF0) == 0xE0) {
-                // 3-byte sequence
                 unsigned char b2 = (unsigned char)s[1];
                 unsigned char b3 = (unsigned char)s[2];
                 if ((b2 & 0xC0) == 0x80 && (b3 & 0xC0) == 0x80) {
                     uint32_t cp = ((c & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
-                    // Typographic spaces not in font → ASCII space
-                    if ((cp >= 0x2000 && cp <= 0x200A) || cp == 0x202F || cp == 0x205F) {
+                    if ((cp >= 0x2000 && cp <= 0x200A) || cp == 0x202F || cp == 0x205F)
                         *d++ = ' ';
-                    // Hyphen-like chars not in font → ASCII hyphen-minus
-                    } else if (cp == 0x2010 || cp == 0x2012 || cp == 0x2015 || cp == 0x2212) {
+                    else if (cp == 0x2010 || cp == 0x2012 || cp == 0x2015 || cp == 0x2212)
                         *d++ = '-';
-                    // Zero-width / invisible: drop silently
-                    } else if (cp == 0x200B || cp == 0x200C || cp == 0x200D ||
-                               cp == 0x2060 || cp == 0xFEFF) {
-                        /* drop */
-                    } else if (supportedCodepoint(cp)) {
+                    else if (cp == 0x200B || cp == 0x200C || cp == 0x200D ||
+                             cp == 0x2060 || cp == 0xFEFF) { /* drop */ }
+                    else if (supportedCodepoint(cp)) {
                         *d++ = (char)c; *d++ = (char)b2; *d++ = (char)b3;
-                    } else { *d++ = '?'; }
+                    } else *d++ = '?';
                     s += 3;
                 } else { *d++ = '?'; s++; }
             } else if ((c & 0xF8) == 0xF0) {
-                // 4-byte sequence: unsupported range
                 *d++ = '?'; s += 4;
             } else {
-                s++;  // invalid byte: skip
+                s++;
             }
         }
         *d = '\0';
-        strncpy(history[historyCount].text, tmp, TMAX);
-        history[historyCount].text[TMAX] = '\0';
     }
+    int len = (int)strlen(sanBuf);
+
+    // --- Evict oldest pairs before allocating so freed memory is immediately reusable ---
+    while (historyCount >= 2 && historyBytes + len > HISTORY_HEAP_BUDGET) {
+        historyEvict();
+        historyEvict();
+    }
+
+    // --- Allocate exactly the right size — no realloc needed ---
+    HistoryNode* node = (HistoryNode*)malloc(sizeof(HistoryNode) + len + 1);
+    if (!node) return;
+    node->next        = nullptr;
+    node->isUser      = isUser;
+    node->isError     = isError;
+    node->displayOnly = displayOnly;
+    memcpy(node->text, sanBuf, len + 1);
+
+    // --- Append to tail ---
+    if (historyTail) historyTail->next = node;
+    else             historyHead = node;
+    historyTail = node;
+    historyBytes += len;
     historyCount++;
     scrollOffset = 0;   // auto-scroll to bottom
 #ifdef TARGET_EPAPER
@@ -1093,6 +1114,14 @@ void addMessage(bool isUser, bool isError, const char* text) {
 #endif
     rebuildLines();
 #ifdef TARGET_EPAPER
+    // If the line cache is nearly full, evict oldest pairs until there is slack for
+    // future messages (AI responses can be up to ~14 lines on the 200×200 display).
+    // Rebuild once after eviction so the display reflects the trimmed history.
+    while (lineCount > MAX_LINES - 20 && historyCount >= 2) {
+        historyEvict();
+        historyEvict();
+        rebuildLines();   // recount lines after each pair so loop exits as soon as there is room
+    }
     epdMsgPending = true;   // bypass rate limit — new content must always render
     if (!isUser) {
         epdShowModel = false;   // discard model name once AI responds
@@ -1674,13 +1703,16 @@ String callGemini(const char* prompt) {
         sysPart["text"]     = AI_SYSTEM_PROMPT AI_WEB_SEARCH_SUFFIX;
 
         JsonArray contents = reqDoc["contents"].to<JsonArray>();
-        for (int i = 0; i < historyCount - 1; i++) {
-            if (history[i].displayOnly) continue;
+        bool gcSeenUser = false;
+        for (HistoryNode* n = historyHead; n && n != historyTail; n = n->next) {
+            if (n->displayOnly) continue;
+            if (!gcSeenUser && !n->isUser) continue;  // skip orphaned AI turns at head
+            gcSeenUser = true;
             JsonObject msg  = contents.add<JsonObject>();
-            msg["role"]     = history[i].isUser ? "user" : "model";
+            msg["role"]     = n->isUser ? "user" : "model";
             JsonArray parts = msg["parts"].to<JsonArray>();
             JsonObject part = parts.add<JsonObject>();
-            part["text"]    = history[i].text;
+            part["text"]    = n->text;
         }
         JsonObject curMsg  = contents.add<JsonObject>();
         curMsg["role"]     = "user";
@@ -1876,11 +1908,14 @@ String callGrok(const char* prompt) {
         reqDoc["instructions"] = AI_SYSTEM_PROMPT AI_WEB_SEARCH_SUFFIX;
 
         JsonArray input = reqDoc["input"].to<JsonArray>();
-        for (int i = 0; i < historyCount - 1; i++) {
-            if (history[i].displayOnly) continue;
+        bool gkSeenUser = false;
+        for (HistoryNode* n = historyHead; n && n != historyTail; n = n->next) {
+            if (n->displayOnly) continue;
+            if (!gkSeenUser && !n->isUser) continue;  // skip orphaned AI turns at head
+            gkSeenUser = true;
             JsonObject msg  = input.add<JsonObject>();
-            msg["role"]     = history[i].isUser ? "user" : "assistant";
-            msg["content"]  = history[i].text;
+            msg["role"]     = n->isUser ? "user" : "assistant";
+            msg["content"]  = n->text;
         }
         JsonObject curMsg  = input.add<JsonObject>();
         curMsg["role"]     = "user";
@@ -2040,11 +2075,14 @@ String callGroq(const char* prompt) {
         sysMsgObj["role"]    = "system";
         sysMsgObj["content"] = AI_SYSTEM_PROMPT;
 
-        for (int i = 0; i < historyCount - 1; i++) {
-            if (history[i].displayOnly) continue;
+        bool gqSeenUser = false;
+        for (HistoryNode* n = historyHead; n && n != historyTail; n = n->next) {
+            if (n->displayOnly) continue;
+            if (!gqSeenUser && !n->isUser) continue;  // skip orphaned AI turns at head
+            gqSeenUser = true;
             JsonObject msg  = messages.add<JsonObject>();
-            msg["role"]     = history[i].isUser ? "user" : "assistant";
-            msg["content"]  = history[i].text;
+            msg["role"]     = n->isUser ? "user" : "assistant";
+            msg["content"]  = n->text;
         }
         JsonObject curMsg  = messages.add<JsonObject>();
         curMsg["role"]     = "user";
@@ -2240,10 +2278,35 @@ static void c3Line(int y, const char* text, uint16_t col, uint16_t bg) {
 #ifdef TARGET_EPAPER
 // --- Session persistence (NVS/Preferences) ---
 // Namespaces: "session" (model/flags/count) and "sess_h" (per-message text+flags).
-// NVS partition is 20KB; cap at 4 messages (4×3KB text ≈ 12KB + overhead).
+// NVS partition is 20KB shared with wifi creds. Budget 12KB for message text;
+// pack as many recent messages as fit rather than a fixed count.
+#define SESSION_TEXT_BUDGET 16000  // bytes of raw message text; leaves ~4KB for NVS overhead + wifi
 
 static void saveSession() {
-    int saveCount = min(historyCount, 4);
+    // Collect pointers newest-first until SESSION_TEXT_BUDGET is reached.
+    // HistoryNode is a singly-linked forward list, so gather into a temp array.
+    const HistoryNode* ptrs[256];
+    int saveCount = 0;
+    int totalBytes = 0;
+    // First pass: collect all nodes in order
+    int total = historyCount;
+    if (total > 255) total = 255;
+    const HistoryNode* tmp[256];
+    int tc = 0;
+    for (const HistoryNode* n = historyHead; n && tc < 256; n = n->next)
+        tmp[tc++] = n;
+    // Walk backwards selecting nodes within budget
+    for (int i = tc - 1; i >= 0; i--) {
+        int len = (int)strlen(tmp[i]->text);
+        if (totalBytes + len > SESSION_TEXT_BUDGET) break;
+        totalBytes += len;
+        ptrs[saveCount++] = tmp[i];
+    }
+    // Reverse ptrs[] so they are chronological (oldest first)
+    for (int i = 0, j = saveCount - 1; i < j; i++, j--) {
+        const HistoryNode* t = ptrs[i]; ptrs[i] = ptrs[j]; ptrs[j] = t;
+    }
+
     Preferences meta;
     meta.begin("session", false);
     meta.putString("model",  GEMINI_MODEL);
@@ -2256,15 +2319,14 @@ static void saveSession() {
     Preferences hist;
     hist.begin("sess_h", false);
     hist.clear();
-    int base = historyCount - saveCount;
     for (int i = 0; i < saveCount; i++) {
         char tk[4], fk[4];
         snprintf(tk, sizeof(tk), "t%d", i);
         snprintf(fk, sizeof(fk), "f%d", i);
-        hist.putString(tk, history[base + i].text);
-        uint8_t fl = (history[base + i].isUser      ? 1 : 0)
-                   | (history[base + i].isError     ? 2 : 0)
-                   | (history[base + i].displayOnly ? 4 : 0);
+        hist.putString(tk, ptrs[i]->text);
+        uint8_t fl = (ptrs[i]->isUser      ? 1 : 0)
+                   | (ptrs[i]->isError     ? 2 : 0)
+                   | (ptrs[i]->displayOnly ? 4 : 0);
         hist.putUChar(fk, fl);
     }
     hist.end();
@@ -2284,19 +2346,18 @@ static bool loadSession() {
 
     Preferences hist;
     hist.begin("sess_h", true);
-    historyCount = 0;
-    for (int i = 0; i < count && historyCount < MAX_MESSAGES; i++) {
+    historyClear();
+    for (int i = 0; i < count; i++) {
         char tk[4], fk[4];
         snprintf(tk, sizeof(tk), "t%d", i);
         snprintf(fk, sizeof(fk), "f%d", i);
         String text = hist.getString(tk, "");
         if (text.isEmpty()) break;
-        strlcpy(history[historyCount].text, text.c_str(), sizeof(history[historyCount].text));
-        uint8_t fl = hist.getUChar(fk, 0);
-        history[historyCount].isUser      = (fl & 1) != 0;
-        history[historyCount].isError     = (fl & 2) != 0;
-        history[historyCount].displayOnly = (fl & 4) != 0;
-        historyCount++;
+        uint8_t fl  = hist.getUChar(fk, 0);
+        bool isUser = (fl & 1) != 0;
+        bool isErr  = (fl & 2) != 0;
+        bool dispOnly = (fl & 4) != 0;
+        addMessage(isUser, isErr, text.c_str(), dispOnly);
     }
     hist.end();
     rebuildLines();
@@ -2755,18 +2816,14 @@ void loop() {
             }
             case INPUT_NEW_CONV:
 do_new_conv:
-                historyCount = 0; lineCount = 0; scrollOffset = 0;
+                historyClear(); lineCount = 0; scrollOffset = 0;
                 moreMode = false; inputBuf[0] = '\0'; inputLen = 0; inputCursor = 0;
-                history[historyCount].isUser = true;
-                history[historyCount].isError = false;
-                history[historyCount].displayOnly = true;
                 {
                     const char* ml = useGrok ? "Grok 4.1 Fast" : useGroq ? "Groq OSS-120b" : GEMINI_MODEL;
                     char newChatBuf[64];
                     snprintf(newChatBuf, sizeof(newChatBuf), "[New chat with %s]", ml);
-                    strncpy(history[historyCount].text, newChatBuf, 2047);
+                    addMessage(/*isUser=*/true, /*isError=*/false, newChatBuf, /*displayOnly=*/true);
                 }
-                historyCount++;
                 rebuildLines();
 #ifndef TARGET_C3
                 kbVisible = true;
@@ -2877,7 +2934,7 @@ do_model_menu:
             WiFi.mode(WIFI_OFF);
             wifiHealthy = false;
         }
-        saveSession();           // persist model + last 4 messages to NVS before power-off
+        saveSession();           // persist model + as many recent messages as fit in NVS budget
         tft.epd.hibernate();     // put display into hardware deep sleep (lowest power)
         digitalWrite(EPD_PWR_EN_L, HIGH);  // cut display power (P-FET off)
         gpio_hold_en(GPIO_NUM_5);           // latch HIGH during deep sleep (GPIO5 is RTC-capable)
