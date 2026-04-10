@@ -2343,7 +2343,7 @@ void showModelChoices(bool sessionAvail = false) {
     tft.u8g2.setForegroundColor(GxEPD_BLACK);
     tft.u8g2.setBackgroundColor(GxEPD_WHITE);
     tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
-    tft.u8g2.print("CRACK: Cheap Remote AI Chat Keyboard");
+    tft.u8g2.print("PATE32: Paper AI Terminal ESP32");
     tft.u8g2.setCursor(2, 2 * LINE_H_LARGE + EPD_FONT_ASCENT);
     tft.u8g2.print("Select AI model:");
     {

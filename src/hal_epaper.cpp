@@ -407,7 +407,7 @@ void halInit() {
     tft.u8g2.setForegroundColor(GxEPD_WHITE);
     tft.u8g2.setBackgroundColor(GxEPD_BLACK);
     tft.u8g2.setCursor(6, EPD_FONT_ASCENT + 2);  // +2px so title sits clear of the top edge
-    tft.u8g2.print("CRACK: Cheap Remote AI Chat Keyboard");
+    tft.u8g2.print("PATE32: Paper AI Terminal ESP32");
     drawBootLine(2, "Chat commands:");
     drawBootLine(3, "more (or Enter) / new (or ctrl-N) / menu");
 
@@ -477,7 +477,7 @@ void halInit() {
         tft.u8g2.setForegroundColor(GxEPD_WHITE);
         tft.u8g2.setBackgroundColor(GxEPD_BLACK);
         tft.u8g2.setCursor(6, EPD_FONT_ASCENT + 2);
-        tft.u8g2.print("CRACK: Cheap Remote AI Chat Keyboard");
+        tft.u8g2.print("PATE32: Paper AI Terminal ESP32");
         drawBootLine(2, "Set keyboard to pairing...");
         tft.endFrame();
 
