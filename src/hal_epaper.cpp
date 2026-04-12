@@ -1,5 +1,6 @@
 // hal_epaper.cpp — ESP32-C3 Supermini: NimBLE BLE HID host keyboard input
 // No LED, no speaker, no touch.
+// 120426 Caps Lock: toggle on 0x39, XOR with shift for letter keys
 // 120426 setupScan(active): active scan during boot reconnect to fetch scan-response device names
 // 120426 ScanCB: accept directed adv (ADV_DIRECT_IND) so bonded KB reconnects on boot
 // 120426 Shorten boot screen text to fit 200x200 panel
@@ -121,10 +122,11 @@ static void saveBondedAddress(const NimBLEAddress& addr) {
 
 // --- HID scan code → ASCII ---
 // USB HID scan codes 0x04–0x1D = a–z (add 0x5D for shifted A–Z)
-static char hidToAscii(uint8_t code, bool shifted) {
+static char hidToAscii(uint8_t code, bool shifted, bool capsLock) {
     if (code >= 0x04 && code <= 0x1D) {
         char c = 'a' + (code - 0x04);
-        return shifted ? (c - 32) : c;
+        bool upper = shifted ^ capsLock;   // caps lock XOR shift; symbols unaffected
+        return upper ? (c - 32) : c;
     }
     if (code >= 0x1E && code <= 0x27) {  // 1–0
         static const char num[]    = "1234567890";
@@ -150,6 +152,8 @@ static char hidToAscii(uint8_t code, bool shifted) {
 }
 
 // --- HID notify callback ---
+static bool capsLock = false;
+
 static void hidNotifyCB(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, bool) {
     if (len < 2) return;
     uint8_t modifier = data[0];
@@ -169,7 +173,8 @@ static void hidNotifyCB(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, 
 
         InputEvent ev = { INPUT_NONE, 0 };
 
-        if (ctrl && code == 0x11) { ev.type = INPUT_NEW_CONV; }        // Ctrl+N
+        if (code == 0x39) { capsLock = !capsLock; }                     // Caps Lock toggle
+        else if (ctrl && code == 0x11) { ev.type = INPUT_NEW_CONV; }   // Ctrl+N
         else if (ctrl && code == 0x10) { ev.type = INPUT_MORE; }       // Ctrl+M
         else if (code == 0x52) { ev.type = INPUT_SCROLL_DOWN; }        // ↑ = scroll toward newer
         else if (code == 0x51) { ev.type = INPUT_SCROLL_UP; }          // ↓ = scroll toward older
@@ -178,7 +183,7 @@ static void hidNotifyCB(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, 
         else if (code == 0x28) { ev.type = INPUT_ENTER; }              // Enter
         else if (code == 0x2A) { ev.type = INPUT_BACKSPACE; }          // Backspace
         else {
-            char c = hidToAscii(code, shifted);
+            char c = hidToAscii(code, shifted, capsLock);
             if (c) { ev.type = INPUT_CHAR; ev.ch = c; }
         }
 
