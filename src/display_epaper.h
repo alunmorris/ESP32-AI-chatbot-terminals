@@ -1,5 +1,6 @@
 // display_epaper.h — GxEPD2 display wrapper with TFT_eSPI-compatible API
 // Used only when TARGET_EPAPER is defined.
+// 120426 200x200: use t0_13b/t0_13 fonts; 1px top margin on all menus
 // 010426 Change user font to u8g2_font_luBIS08_tf (italic serif)
 // 300326 Initial
 #pragma once

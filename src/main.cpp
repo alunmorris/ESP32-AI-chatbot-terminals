@@ -1,5 +1,5 @@
 /********** Cheap AI Chat Keyboard — ESP32-C3 + CYD28 + ESP32-S2 Mini **********
-* 120426 Shorten some text to fit 200x200 epaper
+* 120426 Epaper: 1px top margin on all menus/pages; shorten text to fit 200x200
 * 060426 TARGET_EPAPER: halDeepSleep() after 5 min idle; skip initial screen clear on deep sleep wake
 * 030426
 * 030426 Add #define DEBUG_SERIAL Needs to be // out to allow CPU sleep (Gemini)

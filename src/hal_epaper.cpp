@@ -1,5 +1,6 @@
 // hal_epaper.cpp — ESP32-C3 Supermini: NimBLE BLE HID host keyboard input
 // No LED, no speaker, no touch.
+// 120426 Shorten boot screen text to fit 200x200 panel
 // 080426 halDeepSleep(): revert to light sleep + GPIO9; reconnectTask handles BLE on wake
 // 070426 halDeepSleep(): vTaskDelay loop (BLE alive); wake: drawInputBar() not full drawHistory()
 // 070426 halDeepSleep(): two-phase sleep — 100ms timer wakeup for 110s (BLE alive), then GPIO9 only
