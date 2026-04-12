@@ -1,5 +1,7 @@
 // hal_epaper.cpp — ESP32-C3 Supermini: NimBLE BLE HID host keyboard input
 // No LED, no speaker, no touch.
+// 120426 setupScan(active): active scan during boot reconnect to fetch scan-response device names
+// 120426 ScanCB: accept directed adv (ADV_DIRECT_IND) so bonded KB reconnects on boot
 // 120426 Shorten boot screen text to fit 200x200 panel
 // 080426 halDeepSleep(): revert to light sleep + GPIO9; reconnectTask handles BLE on wake
 // 070426 halDeepSleep(): vTaskDelay loop (BLE alive); wake: drawInputBar() not full drawHistory()
@@ -189,10 +191,11 @@ static NimBLEClient* bleClient    = nullptr;
 static NimBLEAddress  bondedAddr;
 static bool           hasBonded    = false;
 static volatile bool  connected    = false;
-static volatile bool  wantConnect  = false;  // set by scan CB, consumed by main loop
+static volatile bool  wantConnect  = false;   // set by scan CB, consumed by main loop
+static volatile bool  reconnectPhase = false; // true during boot reconnect: accept any connectable device
 
 static bool doConnect(const NimBLEAddress& addr, uint8_t connectTimeoutSec = 15);
-static void setupScan();   // forward decl — registers scan callbacks after each NimBLE init
+static void setupScan(bool active = false);   // forward decl — registers scan callbacks after each NimBLE init
 
 static TaskHandle_t reconnectTaskHandle = nullptr;
 
@@ -318,13 +321,19 @@ static bool doConnect(const NimBLEAddress& addr, uint8_t connectTimeoutSec) {
 // Scan callback — static instance, reused after each NimBLE reinit
 class ScanCB : public NimBLEScanCallbacks {
     void onResult(const NimBLEAdvertisedDevice* dev) override {
-        bool isHID  = dev->isAdvertisingService(HID_SVC_UUID);
-        bool isKB   = dev->getName().find("Keyboard") != std::string::npos ||
-                      dev->getName().find("keyboard") != std::string::npos;
-        EPD_LOG("[BLE scan] found: %s name='%s' HID=%d KB=%d advType=%d\n",
+        bool isHID    = dev->isAdvertisingService(HID_SVC_UUID);
+        bool isKB     = dev->getName().find("Keyboard") != std::string::npos ||
+                        dev->getName().find("keyboard") != std::string::npos;
+        uint8_t aType = dev->getAdvType();
+        bool isDirect = (aType == 1 || aType == 5);  // ADV_DIRECT_IND high/low duty — bonded KB reconnect
+        EPD_LOG("[BLE scan] found: %s name='%s' HID=%d KB=%d isDirect=%d advType=%d\n",
             dev->getAddress().toString().c_str(),
-            dev->getName().c_str(), isHID, isKB, dev->getAdvType());
-        if (!isHID && !isKB) return;  // accept HID service OR keyboard name (directed adv has no UUID)
+            dev->getName().c_str(), isHID, isKB, isDirect, aType);
+        // During boot reconnect accept any connectable device — keyboard may have a non-standard name.
+        // subscribeHID() will reject it if it isn't actually a keyboard.
+        bool connectable = (aType == 0 || aType == 1 || aType == 5);
+        if (!reconnectPhase && !isHID && !isKB && !isDirect) return;
+        if (reconnectPhase && !connectable) return;
         NimBLEDevice::getScan()->stop();
         bondedAddr = dev->getAddress();
         if (!hasBonded) {
@@ -363,11 +372,13 @@ bool halIsDeepSleepWake() {
 
 // Register scan callbacks on the current scan singleton (must be called after each NimBLE init)
 //030426 Gemini mod for low power
-static void setupScan() {
+static void setupScan(bool active) {
     NimBLEScan* scan = NimBLEDevice::getScan();
     scan->setScanCallbacks(&gScanCB, false);
-    // Passive scan: no SCAN_REQ Tx, just listen. Keyboards advertise UUID in the adv packet.
-    scan->setActiveScan(false);
+    // Active scan sends SCAN_REQ to retrieve scan-response packets (full device name).
+    // Use active=true during boot reconnect so keyboards that put their name only in
+    // the scan response are still found. Passive is fine for background reconnects.
+    scan->setActiveScan(active);
     scan->setInterval(320); // 200 ms (units of 0.625 ms)
     scan->setWindow(96);    //  60 ms — 30% duty cycle; leaves radio time for WiFi
 }
@@ -430,8 +441,11 @@ void halInit() {
 
     if (hasBonded) {
         // Phase 1: scan for known keyboard — user taps a key to wake it and trigger advertising
+        // Active scan: sends SCAN_REQ to get scan-response packets (full device name).
+        // reconnectPhase: accept any connectable device (keyboard may have non-standard name).
 
-        setupScan();
+        reconnectPhase = true;
+        setupScan(true);  // active scan during boot reconnect
         NimBLEScan* scan = NimBLEDevice::getScan();
         // 3 × 10s windows; start() blocks until ScanCB calls stop() (KB found) or 10s expires.
         for (int w = 0; w < 3 && !connected; w++) {
@@ -467,6 +481,7 @@ void halInit() {
                 }
             }
         }
+        reconnectPhase = false;
         EPD_LOG("[EPD BLE] reconnect scan done: connected=%d\n", connected);
     }
 
