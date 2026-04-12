@@ -32,13 +32,13 @@
 
 // --- Font selection (can set larger font for higher-DPI 200×200 panel, but some lines don't fit at present) ---
 #ifdef EPD_SIZE_250x122
-#  define EPD_FONT          u8g2_font_helvB08_tf   // AI text (bold upright)
+#  define EPD_FONT          u8g2_font_helvB08_tf   // AI text — larger for 200×200 DPI
 #  define EPD_FONT_USER     u8g2_font_luBIS08_tf   // user text italic
 #  define EPD_FONT_ASCENT   8    // pixels above baseline (ascent_A)
 #  define FONT_LINE_H      13    // max char height 13 (ascent 11 + descent 2)
-#else
-#  define EPD_FONT          u8g2_font_helvB08_tf   // AI text — larger for 200×200 DPI
-#  define EPD_FONT_USER     u8g2_font_luBIS08_tf   // user text italic
+#else							//200x200 smaller screen
+#  define EPD_FONT          u8g2_font_t0_13b_tf // or smaller u8g2_font_helvB08_tf   // AI text (bold upright)
+#  define EPD_FONT_USER     u8g2_font_t0_13_tf // or smaller u8g2_font_luBIS08_tf   // user text italic or plain
 #  define EPD_FONT_ASCENT  8    // pixels above baseline (ascent_A)
 #  define FONT_LINE_H      13    // max char height 16 (ascent 13 + descent 3)
 #endif

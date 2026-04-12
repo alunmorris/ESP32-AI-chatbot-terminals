@@ -1,4 +1,5 @@
 /********** Cheap AI Chat Keyboard — ESP32-C3 + CYD28 + ESP32-S2 Mini **********
+* 120426 Shorten some text to fit 200x200 epaper
 * 060426 TARGET_EPAPER: halDeepSleep() after 5 min idle; skip initial screen clear on deep sleep wake
 * 030426
 * 030426 Add #define DEBUG_SERIAL Needs to be // out to allow CPU sleep (Gemini)
@@ -471,13 +472,13 @@ void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
     tft.u8g2.setFont(EPD_FONT);
     tft.u8g2.setForegroundColor(GxEPD_BLACK);
     tft.u8g2.setBackgroundColor(GxEPD_WHITE);
-    tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+    tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
     tft.u8g2.print("Select WiFi network:");
     int maxAPs = min(apCount, (SCREEN_H - 12) / 12);  // header=12px, each AP=12px
     for (int i = 0; i < maxAPs; i++) {
         char line[64];
         snprintf(line, sizeof(line), "%d. %s  %s", i + 1, apSsids[i], rssiToBars(apRssi[i]));
-        tft.u8g2.setCursor(2, (i + 1) * FONT_LINE_H + EPD_FONT_ASCENT);
+        tft.u8g2.setCursor(2, 1 + (i + 1) * FONT_LINE_H + EPD_FONT_ASCENT);
         tft.u8g2.print(line);
     }
     tft.endFrame();
@@ -824,7 +825,7 @@ void drawHistory() {
     auto renderSlot = [&](int slot, int fi, int displayCount) {
         int idx = fi + slot;
         if (idx < displayCount) {
-            int y = slot * lineH;
+            int y = 1 + slot * lineH;  // 1px top margin prevents tallest glyphs clipping at y=0
             if (lineIsUser[idx]) {
                 tft.u8g2.setFont(EPD_FONT_USER);
                 int32_t w = (int32_t)tft.u8g2.getUTF8Width(lines[idx]);
@@ -838,7 +839,7 @@ void drawHistory() {
             const char* ml = useGrok ? "Grok 4.1 Fast" : useGroq ? "Groq OSS-120b" : GEMINI_MODEL;
             tft.u8g2.setFont(EPD_FONT);
             int32_t w = (int32_t)tft.u8g2.getUTF8Width(ml);
-            tft.u8g2.setCursor(SCREEN_W - (int)w - 2, EPD_FONT_ASCENT);
+            tft.u8g2.setCursor(SCREEN_W - (int)w - 2, 1 + EPD_FONT_ASCENT);
             tft.u8g2.print(ml);
         }
     };
@@ -880,7 +881,7 @@ void drawHistory() {
             tft.u8g2.setForegroundColor(GxEPD_WHITE);
             tft.u8g2.setBackgroundColor(GxEPD_BLACK);
             tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
-            tft.u8g2.print("Sleeping... press WAKE to wake");
+            tft.u8g2.print("Sleeping - hit WAKE to wake");
             tft.u8g2.setForegroundColor(GxEPD_BLACK);
             tft.u8g2.setBackgroundColor(GxEPD_WHITE);
         } else {
@@ -1158,9 +1159,9 @@ void enterPassword(const char* ssidPrompt, char* out) {
             tft.u8g2.setFont(EPD_FONT);
             tft.u8g2.setForegroundColor(GxEPD_BLACK);
             tft.u8g2.setBackgroundColor(GxEPD_WHITE);
-            tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+            tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
             tft.u8g2.print("Password for:");
-            tft.u8g2.setCursor(2, FONT_LINE_H + EPD_FONT_ASCENT);
+            tft.u8g2.setCursor(2, 1 + FONT_LINE_H + EPD_FONT_ASCENT);
             tft.u8g2.print(ssidPrompt);
             tft.endFrame();
         }
@@ -1286,7 +1287,7 @@ bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
         tft.u8g2.setFont(EPD_FONT);
         tft.u8g2.setForegroundColor(GxEPD_BLACK);
         tft.u8g2.setBackgroundColor(GxEPD_WHITE);
-        tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+        tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
         tft.u8g2.print(wifiMsg);
         tft.endFrame();
 #else
@@ -1328,7 +1329,7 @@ void selectAP() {
             tft.u8g2.setFont(EPD_FONT);
             tft.u8g2.setForegroundColor(GxEPD_BLACK);
             tft.u8g2.setBackgroundColor(GxEPD_WHITE);
-            tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+            tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
             tft.u8g2.print("Scanning WiFi...");
             tft.endFrame();
 #else
@@ -1348,9 +1349,9 @@ void selectAP() {
             tft.u8g2.setFont(EPD_FONT);
             tft.u8g2.setForegroundColor(GxEPD_BLACK);
             tft.u8g2.setBackgroundColor(GxEPD_WHITE);
-            tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+            tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
             tft.u8g2.print("No networks found.");
-            tft.u8g2.setCursor(2, FONT_LINE_H + EPD_FONT_ASCENT);
+            tft.u8g2.setCursor(2, 1 + FONT_LINE_H + EPD_FONT_ASCENT);
             tft.u8g2.print("Press any key to retry.");
             tft.endFrame();
 #else
@@ -1420,7 +1421,7 @@ void selectAP() {
                 tft.u8g2.setFont(EPD_FONT);
                 tft.u8g2.setForegroundColor(GxEPD_BLACK);
                 tft.u8g2.setBackgroundColor(GxEPD_WHITE);
-                tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+                tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
                 tft.u8g2.print(msg);
                 tft.endFrame();
             }
@@ -1450,11 +1451,11 @@ void selectAP() {
                 tft.u8g2.setFont(EPD_FONT);
                 tft.u8g2.setForegroundColor(GxEPD_BLACK);
                 tft.u8g2.setBackgroundColor(GxEPD_WHITE);
-                tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
+                tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
                 tft.u8g2.print(failMsg);
-                tft.u8g2.setCursor(2, FONT_LINE_H + EPD_FONT_ASCENT);
+                tft.u8g2.setCursor(2, 1 + FONT_LINE_H + EPD_FONT_ASCENT);
                 tft.u8g2.print("1  Re-enter password");
-                tft.u8g2.setCursor(2, 2 * FONT_LINE_H + EPD_FONT_ASCENT);
+                tft.u8g2.setCursor(2, 1 + 2 * FONT_LINE_H + EPD_FONT_ASCENT);
                 tft.u8g2.print("2  New scan");
                 tft.endFrame();
             }
@@ -2403,20 +2404,20 @@ void showModelChoices(bool sessionAvail = false) {
     tft.u8g2.setFont(EPD_FONT);
     tft.u8g2.setForegroundColor(GxEPD_BLACK);
     tft.u8g2.setBackgroundColor(GxEPD_WHITE);
-    tft.u8g2.setCursor(2, EPD_FONT_ASCENT);
-    tft.u8g2.print("PATE32: Paper AI Terminal ESP32");
-    tft.u8g2.setCursor(2, 2 * LINE_H_LARGE + EPD_FONT_ASCENT);
+    tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
+    tft.u8g2.print("Paper AI Remote Terminal");
+    tft.u8g2.setCursor(2, 1 + 2 * LINE_H_LARGE + EPD_FONT_ASCENT);
     tft.u8g2.print("Select AI model:");
     {
         int optY = 3 * LINE_H_LARGE;
         for (int i = 0; i < NUM_MODELS; i++) {
             snprintf(buf, sizeof(buf), "%c %s", MODEL_DEFS[i].key, MODEL_DEFS[i].name);
-            tft.u8g2.setCursor(2, optY + EPD_FONT_ASCENT);
+            tft.u8g2.setCursor(2, 1 + optY + EPD_FONT_ASCENT);
             tft.u8g2.print(buf);
             optY += LINE_H_LARGE;
         }
         if (sessionAvail) {
-            tft.u8g2.setCursor(2, optY + EPD_FONT_ASCENT);
+            tft.u8g2.setCursor(2, 1 + optY + EPD_FONT_ASCENT);
             tft.u8g2.print("R Resume last session");
         }
     }

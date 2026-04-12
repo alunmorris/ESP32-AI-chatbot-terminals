@@ -407,12 +407,12 @@ void halInit() {
     tft.u8g2.setForegroundColor(GxEPD_WHITE);
     tft.u8g2.setBackgroundColor(GxEPD_BLACK);
     tft.u8g2.setCursor(6, EPD_FONT_ASCENT + 2);  // +2px so title sits clear of the top edge
-    tft.u8g2.print("PATE32: Paper AI Terminal ESP32");
+    tft.u8g2.print("Paper AI Remote Terminal");
     drawBootLine(2, "Chat commands:");
-    drawBootLine(3, "more (or Enter) / new (or ctrl-N) / menu");
+    drawBootLine(3, "more (or Enter) / new / menu");
 
     drawBootLine(5, "Keyboard connection...");
-    drawBootLine(6, hasBonded ? "Tap any key to wake keyboard" : "");
+    drawBootLine(6, hasBonded ? "Tap any key to wake KB" : "");
     tft.endFrame();
 
     // Partial-frame update for a single status row — height exactly lineH avoids overlap.
