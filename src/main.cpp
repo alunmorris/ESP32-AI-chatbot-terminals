@@ -877,7 +877,7 @@ void drawHistory() {
     {
         tft.u8g2.setFont(EPD_FONT);
         if (epdSleeping) {
-            tft.epd.fillRect(0, inputY, SCREEN_W, lineH, GxEPD_BLACK);
+            tft.epd.fillRect(0, inputY, SCREEN_W, lineH + 2, GxEPD_BLACK);
             tft.u8g2.setForegroundColor(GxEPD_WHITE);
             tft.u8g2.setBackgroundColor(GxEPD_BLACK);
             tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
@@ -2593,12 +2593,15 @@ void setup() {
         tft.endFrame();
     }
 #elif defined(TARGET_P3)
-    // ST7789P3 284×76 native landscape
-    tft.setRotation(0);
+    // ST7789P3: physical GRAM 76 col × 284 row (portrait-native).
+    // rotation=1 → landscape 284×76, matching SCREEN_W/H. CGRAM_OFFSET handles ST7789 address offset.
+    tft.setRotation(1);
 #if defined(TFT_BL) && (TFT_BL >= 0)
     pinMode(TFT_BL, OUTPUT);
     digitalWrite(TFT_BL, HIGH);
 #endif
+    tft.fillScreen(TFT_BLUE);
+    delay(1000);
 #elif defined(TARGET_C3)
     // ST7789 GRAM is 240col x 320row (portrait-native). Pre-fill all GRAM in
     // rotation 0 (CASET 0..239, RASET 0..319 both valid) so that GRAM rows
