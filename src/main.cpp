@@ -72,7 +72,7 @@ bool        geminiUseGlobal   = false;  // true → /locations/global/ in path
 bool        useGrok           = false;  // true → route to Grok (xAI) instead of Gemini
 bool        useGroq           = false;  // true → route to Groq instead of Gemini
 // Font selected via FONT_18PX in font.h; FONT_DATA / FONT_LINE_H etc. set there.
-bool        invertDisplay     = true;   // true = Light Theme (light bg, black text)
+bool        invertDisplay     = true;   // true = Light Theme (light bg, black text); hardware inverts so true=dark appearance
 #define COL_INVERT_BG   0xC618          // light grey (~RGB 192,192,192)
 #ifdef TARGET_EPAPER
 #  undef  COL_INVERT_BG
@@ -437,13 +437,6 @@ void drawKeyboard() {
 #define AP_ROW_H  24   // height of each AP list row
 
 // Convert RSSI to 4-char ASCII signal bar string.
-static const char* rssiToBars(int rssi) {
-    if (rssi >= -55) return "####";
-    if (rssi >= -65) return "###.";
-    if (rssi >= -75) return "##..";
-    if (rssi >= -85) return "#...";
-    return "....";
-}
 
 // WiFi signal colour for input bar icon (strong→green, good→orange, weak→yellow, none→red).
 static uint16_t rssiColor() {
@@ -481,15 +474,12 @@ void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
         uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
         uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
         tft.fillScreen(bg);
-        tft.setTextFont(1);
-        tft.setTextColor(invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
-        tft.drawString("Select WiFi:", 2, 0);
+        c3Line(0, "Select WiFi:", invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
         int maxAPs = min(apCount, (SCREEN_H / FONT_LINE_H) - 1);
-        tft.setTextColor(fg, bg);
         for (int i = 0; i < maxAPs; i++) {
             char line[48];
-            snprintf(line, sizeof(line), "%d %s %s", i + 1, apSsids[i], rssiToBars(apRssi[i]));
-            tft.drawString(line, 2, FONT_LINE_H * (i + 1));
+            snprintf(line, sizeof(line), "%d %s %ddB", i + 1, apSsids[i], apRssi[i]);
+            c3Line(FONT_LINE_H * (i + 1), line, fg, bg);
         }
     }
     return;
@@ -506,7 +496,7 @@ void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
     int maxAPs = min(apCount, (SCREEN_H - 12) / 12);  // header=12px, each AP=12px
     for (int i = 0; i < maxAPs; i++) {
         char line[64];
-        snprintf(line, sizeof(line), "%d. %s  %s", i + 1, apSsids[i], rssiToBars(apRssi[i]));
+        snprintf(line, sizeof(line), "%d. %s  %ddB", i + 1, apSsids[i], apRssi[i]);
         tft.u8g2.setCursor(2, 1 + (i + 1) * FONT_LINE_H + EPD_FONT_ASCENT);
         tft.u8g2.print(line);
     }
@@ -540,7 +530,7 @@ void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
         tft.setCursor(2 + TXT_W, ty); tft.print(ssidDisp);
         // Signal bars + dBm (right side)
         char sig[12];
-        snprintf(sig, sizeof(sig), "%s %4d", rssiToBars(apRssi[i]), apRssi[i]);
+        snprintf(sig, sizeof(sig), "%ddB", apRssi[i]);
         tft.setCursor(sigX, ty); tft.print(sig);
     }
     uiFontOff();
@@ -1534,23 +1524,33 @@ void selectAP() {
                 tft.u8g2.print("2  New scan");
                 tft.endFrame();
             }
-#else
-            uint16_t failBg = invertDisplay ? COL_INVERT_BG : COL_BG;
-            tft.fillScreen(failBg);
-            uiFontOn();
-            tft.setTextColor(TFT_RED, failBg);
-            char failMsg[64]; snprintf(failMsg, sizeof(failMsg), "Failed: %.40s", selSsid);
-            tft.drawString(failMsg, 2, (AP_ROW_H - TXT_H) / 2);
-
-            // Draw two option rows (same style as AP list)
-            static const char* opts[] = { "1  Re-enter password", "2  New scan" };
-            for (int i = 0; i < 2; i++) {
-                int y = AP_ROW_H * (i + 1);
-                tft.fillRect(0, y, SCREEN_W, AP_ROW_H - 1, COL_KEY_FACE);
-                tft.setTextColor(COL_KEY_LABEL, COL_KEY_FACE);
-                tft.drawString(opts[i], 2, y + (AP_ROW_H - TXT_H) / 2);
+#elif defined(TARGET_P3)
+            {
+                uint16_t failBg = invertDisplay ? COL_INVERT_BG : COL_BG;
+                uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
+                tft.fillScreen(failBg);
+                char failMsg[64]; snprintf(failMsg, sizeof(failMsg), "Failed: %.40s", selSsid);
+                c3Line(0,                "Select WiFi:", TFT_RED, failBg);
+                c3Line(FONT_LINE_H,     "1 Re-enter password", fg, failBg);
+                c3Line(2 * FONT_LINE_H, "2 New scan",          fg, failBg);
             }
-            uiFontOff();
+#else
+            {
+                uint16_t failBg = invertDisplay ? COL_INVERT_BG : COL_BG;
+                tft.fillScreen(failBg);
+                uiFontOn();
+                tft.setTextColor(TFT_RED, failBg);
+                char failMsg[64]; snprintf(failMsg, sizeof(failMsg), "Failed: %.40s", selSsid);
+                tft.drawString(failMsg, 2, (AP_ROW_H - TXT_H) / 2);
+                static const char* opts[] = { "1  Re-enter password", "2  New scan" };
+                for (int i = 0; i < 2; i++) {
+                    int y = AP_ROW_H * (i + 1);
+                    tft.fillRect(0, y, SCREEN_W, AP_ROW_H - 1, COL_KEY_FACE);
+                    tft.setTextColor(COL_KEY_LABEL, COL_KEY_FACE);
+                    tft.drawString(opts[i], 2, y + (AP_ROW_H - TXT_H) / 2);
+                }
+                uiFontOff();
+            }
 #endif
 
             // Wait for key 1 or 2
@@ -2475,7 +2475,7 @@ void showModelChoices(bool sessionAvail = false) {
         snprintf(buf, sizeof(buf), "%c %s", MODEL_DEFS[i].key, MODEL_DEFS[i].name);
         c3Line(optY, buf, fg, bg); optY += LINE_H_P3;
     }
-    if (invertDisplay) c3Line(optY, "D Dark Theme", fg, bg);
+    if (invertDisplay) c3Line(optY, "L Light Theme", fg, bg);
 #elif defined(TARGET_EPAPER)
     tft.beginFrame();
     tft.epd.fillScreen(GxEPD_WHITE);
@@ -2506,7 +2506,7 @@ void showModelChoices(bool sessionAvail = false) {
         snprintf(buf, sizeof(buf), "%c %s", MODEL_DEFS[i].key, MODEL_DEFS[i].name);
         c3Line(optY, buf, fg, bg); optY += LINE_H_LARGE;
     }
-    if (invertDisplay) c3Line(optY, "D Dark Theme", fg, bg);
+    if (invertDisplay) c3Line(optY, "L Light Theme", fg, bg);
 #else
     uiFontOn();
     tft.setTextColor(fg, bg);
@@ -2515,7 +2515,7 @@ void showModelChoices(bool sessionAvail = false) {
         snprintf(buf, sizeof(buf), "%c %s", MODEL_DEFS[i].key, MODEL_DEFS[i].name);
         tft.drawString(buf, 2, optY); optY += TXT_H;
     }
-    if (invertDisplay) tft.drawString("D Dark Theme", 2, optY);
+    if (invertDisplay) tft.drawString("L Light Theme", 2, optY);
     uiFontOff();
 #endif
 }
@@ -2525,6 +2525,25 @@ void selectModel() {
     bool sessionAvail = halIsDeepSleepWake();
 #else
     bool sessionAvail = false;
+#endif
+#ifndef TARGET_EPAPER
+    {
+        uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+        uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
+        tft.fillScreen(bg);
+        drawInputBar();
+#if defined(TARGET_C3)
+        c3Line(0,             "CRACK: Cheap Remote AI Chat Keyboard", fg, bg);
+        c3Line(LINE_H_P3,     "",                                     fg, bg);
+        c3Line(2 * LINE_H_P3, "Select AI model:",                     fg, bg);
+#else
+        uiFontOn();
+        tft.setTextColor(fg, bg);
+        tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
+        tft.drawString("Select AI model:", 2, 2 * TXT_H + 4);
+        uiFontOff();
+#endif
+    }
 #endif
     showModelChoices(sessionAvail);
 
@@ -2581,7 +2600,7 @@ void selectModel() {
             continue;
         }
 #endif
-        if (ch == 'd' || ch == 'D') {
+        if (ch == 'd' || ch == 'D' || ch == 'l' || ch == 'L') {
             invertDisplay = !invertDisplay;
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillScreen(bg);
@@ -2730,31 +2749,11 @@ void setup() {
         selectAP();  // scan → pick AP → enter password → connect; returns only on success
     }
 
-#ifndef TARGET_EPAPER
-    tft.fillScreen(invertDisplay ? COL_INVERT_BG : COL_BG);  // clear AP/splash UI before drawing model menu
-#endif
-
 #ifndef TARGET_C3
     drawKeyboard();
 #endif
-    drawInputBar();
 
-    {
-        uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-        uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
-#if defined(TARGET_C3) && !defined(TARGET_EPAPER)
-        c3Line(0,          "CRACK: Cheap Remote AI Chat Keyboard", fg, bg);
-        c3Line(2 * LINE_H_P3,  "Select AI model:",       fg, bg);
-#else
-        uiFontOn();
-        tft.setTextColor(fg, bg);
-        tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
-        tft.drawString("Select AI model:",       2, 2 * TXT_H + 4);
-        uiFontOff();
-#endif
-    }
-
-    selectModel();  // draws choices at y=30+ and waits for 1/2/3
+    selectModel();  // clears screen, draws header + choices, waits for selection
 
     // Render the initial chat page with the correct theme.
     // selectModel() leaves a transient "Ready." display; drawHistory() replaces it
