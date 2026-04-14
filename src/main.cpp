@@ -1,4 +1,6 @@
 /********** Cheap AI Chat Keyboard — ESP32-C3 + CYD28 + ESP32-S2 Mini **********
+* 140426 P3/C3: cursor blink 500ms; error text black in light theme; fix chat overflow (evict when line cache full)
+* 140426 P3: AP list via c3Line (fix SPI glitch); dB signal strength; menu clears screen; "L Light Theme"
 * 120426 Epaper: 1px top margin on all menus/pages; shorten text to fit 200x200
 * 060426 TARGET_EPAPER: halDeepSleep() after 5 min idle; skip initial screen clear on deep sleep wake
 * 030426
