@@ -964,6 +964,8 @@ void drawHistory() {
                 uint16_t col = lineColor[idx];
                 if (invertDisplay) {
                     col = lineIsUser[idx] ? COL_USER_LIGHT : TFT_BLACK;
+                } else if (col == COL_ERROR) {
+                    col = TFT_WHITE;  // hardware inverts to black on light bg
                 }
                 spr.setTextColor(col, bg);
                 if (lineIsUser[idx]) {
@@ -1049,8 +1051,10 @@ void drawHistory() {
     for (int i = 0; i < maxVis && (firstIdx + i) < visCount; i++) {
         int idx = firstIdx + i;
         uint16_t col = lineColor[idx];
-        if (invertDisplay && col != COL_ERROR) {
+        if (invertDisplay) {
             col = lineIsUser[idx] ? COL_USER_LIGHT : TFT_BLACK;
+        } else if (col == COL_ERROR) {
+            col = TFT_WHITE;  // hardware inverts to black on light bg
         }
         tft.setTextColor(col, bg);
         if (lineIsUser[idx]) {
