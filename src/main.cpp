@@ -73,6 +73,11 @@ bool        useGrok           = false;  // true → route to Grok (xAI) instead 
 bool        useGroq           = false;  // true → route to Groq instead of Gemini
 // Font selected via FONT_18PX in font.h; FONT_DATA / FONT_LINE_H etc. set there.
 bool        invertDisplay     = true;   // true = Light Theme (light bg, black text); hardware inverts so true=dark appearance
+#ifdef TARGET_C3
+bool              cursorVisible       = true;
+unsigned long     lastCursorToggleMs  = 0;
+static constexpr unsigned long CURSOR_BLINK_MS = 500;
+#endif
 #define COL_INVERT_BG   0xC618          // light grey (~RGB 192,192,192)
 #ifdef TARGET_EPAPER
 #  undef  COL_INVERT_BG
@@ -619,7 +624,8 @@ void drawInputBar() {
             char preCur[INPUT_BUF_SIZE] = {0};
             strncpy(preCur, inputBuf + start, inputCursor - start);
             int curX = 2 + promptW + spr.textWidth(preCur);
-            spr.fillRect(curX, 2, 1, lineH - 4, invertDisplay ? TFT_DARKGREY : TFT_YELLOW);
+            spr.fillRect(curX, 2, 1, lineH - 4,
+                cursorVisible ? (invertDisplay ? TFT_DARKGREY : TFT_YELLOW) : bg);
             // WiFi signal icon at bottom right
             drawWifiIcon(spr, SCREEN_W - iconW / 2, lineH - 2, rssiColor(), bg);
             FONT_UNLOAD(spr);
@@ -638,7 +644,8 @@ void drawInputBar() {
             char dispBuf[INPUT_BUF_SIZE] = {0};
             strncpy(dispBuf, inputBuf + start, inputLen - start);
             tft.drawString(dispBuf, 2 + promptW, inputY);
-            tft.fillRect(2 + promptW + (inputCursor - start) * TXT_W, inputY, 2, TXT_H, invertDisplay ? TFT_BLACK : TFT_WHITE);
+            tft.fillRect(2 + promptW + (inputCursor - start) * TXT_W, inputY, 2, TXT_H,
+                cursorVisible ? (invertDisplay ? TFT_BLACK : TFT_WHITE) : bg);
             fontOff();
         }
         return;
@@ -953,7 +960,7 @@ void drawHistory() {
             if ((firstIdx + i) < visCount) {
                 int idx = firstIdx + i;
                 uint16_t col = lineColor[idx];
-                if (invertDisplay && col != COL_ERROR) {
+                if (invertDisplay) {
                     col = lineIsUser[idx] ? COL_USER_LIGHT : TFT_BLACK;
                 }
                 spr.setTextColor(col, bg);
@@ -1005,7 +1012,8 @@ void drawHistory() {
             char preCur[INPUT_BUF_SIZE] = {0};
             strncpy(preCur, inputBuf + start, inputCursor - start);
             int curX = 2 + promptW + spr.textWidth(preCur);
-            spr.fillRect(curX, 2, 1, lineH - 4, invertDisplay ? TFT_DARKGREY : TFT_YELLOW);
+            spr.fillRect(curX, 2, 1, lineH - 4,
+                cursorVisible ? (invertDisplay ? TFT_DARKGREY : TFT_YELLOW) : bg);
             spr.pushSprite(0, (maxVis - 1) * lineH);
         }
 #ifdef TARGET_P3
@@ -1144,15 +1152,13 @@ void addMessage(bool isUser, bool isError, const char* text, bool displayOnly = 
     int prevLineCount = lineCount;
 #endif
     rebuildLines();
-#ifdef TARGET_EPAPER
-    // If the line cache is nearly full, evict oldest pairs until there is slack for
-    // future messages (AI responses can be up to ~14 lines on the 200×200 display).
-    // Rebuild once after eviction so the display reflects the trimmed history.
+    // Evict oldest pairs when line cache is nearly full so new messages always appear.
     while (lineCount > MAX_LINES - 20 && historyCount >= 2) {
         historyEvict();
         historyEvict();
-        rebuildLines();   // recount lines after each pair so loop exits as soon as there is room
+        rebuildLines();
     }
+#ifdef TARGET_EPAPER
     epdMsgPending = true;   // bypass rate limit — new content must always render
     if (!isUser) {
         epdShowModel = false;   // discard model name once AI responds
@@ -2837,6 +2843,11 @@ void loop() {
     InputEvent ev;
     if (halPollInput(&ev)) {
         lastActivityMs = millis();
+#ifdef TARGET_C3
+        // Reset cursor to visible on any keypress so it's always seen after typing
+        cursorVisible      = true;
+        lastCursorToggleMs = millis();
+#endif
 
         if (WiFi.getMode() == WIFI_OFF) {
             Serial.println("[Power] Activity detected. Waking WiFi...");
@@ -3045,4 +3056,12 @@ do_model_menu:
 #endif
     delay(20);
 
+#ifdef TARGET_C3
+    // Cursor blink: toggle every CURSOR_BLINK_MS and redraw input bar
+    if (millis() - lastCursorToggleMs >= CURSOR_BLINK_MS) {
+        lastCursorToggleMs = millis();
+        cursorVisible = !cursorVisible;
+        drawInputBar();
+    }
+#endif
 }
