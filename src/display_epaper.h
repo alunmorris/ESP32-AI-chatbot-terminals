@@ -1,6 +1,6 @@
 // display_epaper.h — GxEPD2 display wrapper with TFT_eSPI-compatible API
 // Used only when TARGET_EPAPER is defined.
-// 120426 200x200: use t0_13b/t0_13 fonts; 1px top margin on all menus
+// 120426 200x200: use u8g2_font_t0_13b_tf, u8g2_font_t0_13_tf fonts; 1px top margin on all menus
 // 010426 Change user font to u8g2_font_luBIS08_tf (italic serif)
 // 300326 Initial
 #pragma once
@@ -36,7 +36,7 @@
 #  define EPD_FONT          u8g2_font_helvB08_tf   // AI text — larger for 200×200 DPI
 #  define EPD_FONT_USER     u8g2_font_luBIS08_tf   // user text italic
 #  define EPD_FONT_ASCENT   8    // pixels above baseline (ascent_A)
-#  define FONT_LINE_H      13    // max char height 13 (ascent 11 + descent 2)
+#  define FONT_LINE_H      12    // max char height 12 (ascent 10 + descent 2). Gives 10 lines
 #else							//200x200 smaller screen
 #  define EPD_FONT          u8g2_font_t0_13b_tf // or smaller u8g2_font_helvB08_tf   // AI text (bold upright)
 #  define EPD_FONT_USER     u8g2_font_t0_13_tf // or smaller u8g2_font_luBIS08_tf   // user text italic or plain

@@ -231,6 +231,11 @@ static char epdPromptBuf[128]   = "";
 static bool epdShowModel        = false;  // show model name until first AI response
 static bool epdSleeping         = false;  // replace input row with sleep message
 #endif
+#ifdef TARGET_P3
+static bool p3PromptInInputRow = false;  // unused for now; reserved
+static char p3PromptBuf[128]   = "";
+static bool p3ShowModel        = false;  // show model name on blank chat page until first AI response
+#endif
 
 // --- Keyboard layout ---
 #ifdef TARGET_C3
@@ -282,7 +287,7 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define LINE_H_SMALL     12                   // DejaVuSansBold10px line height
 #define SPLASH_H         (3 * LINE_H_LARGE)   // boot splash: 3 lines tall
 #ifdef TARGET_P3
-#  define LINE_H_P3 12   // P3 284×76: tighter than yAdvance=15, gives 6 lines
+#  define LINE_H_P3 FONT_LINE_H  // matches Font 1 (8px)
 #else
 #  define LINE_H_P3 LINE_H_LARGE
 #endif
@@ -324,7 +329,7 @@ unsigned long lastActivityMs = 0;      // Tracks the last time the user pressed 
 
 // --- AI system prompt ---
 // Word limit varies by display size: e-paper (200×200) fits fewer lines than TFT (320×240).
-#ifdef TARGET_EPAPER
+#if defined(TARGET_EPAPER) || defined(TARGET_P3)
 #  define AI_MAX_WORDS_STR "80"
 #else
 #  define AI_MAX_WORDS_STR "120"
@@ -462,9 +467,33 @@ static void drawWifiIcon(TFT_eSprite& spr, int cx, int cy, uint16_t color, uint1
     spr.drawArc(cx, cy, 10,  8, 135, 225, color, bg);
 }
 
+#ifdef TARGET_C3
+// Forward declaration — defined later (after selectModel). Used by WiFi page functions below.
+static void c3Line(int y, const char* text, uint16_t col, uint16_t bg);
+#endif
+
 // Draw full-screen AP list. apCount entries from apSsids[]/apRssi[].
 // Rows numbered 1–apCount starting at y=AP_ROW_H (row 0 = header).
 void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
+#ifdef TARGET_P3
+    // Compact list for 284×76: header + up to 8 APs at FONT_LINE_H (8px) each.
+    {
+        uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+        uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
+        tft.fillScreen(bg);
+        tft.setTextFont(1);
+        tft.setTextColor(invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
+        tft.drawString("Select WiFi:", 2, 0);
+        int maxAPs = min(apCount, (SCREEN_H / FONT_LINE_H) - 1);
+        tft.setTextColor(fg, bg);
+        for (int i = 0; i < maxAPs; i++) {
+            char line[48];
+            snprintf(line, sizeof(line), "%d %s %s", i + 1, apSsids[i], rssiToBars(apRssi[i]));
+            tft.drawString(line, 2, FONT_LINE_H * (i + 1));
+        }
+    }
+    return;
+#endif
 #ifdef TARGET_EPAPER
     // Compact AP list for 200×200. Header row + up to 8 APs at 12 px each.
     tft.beginFrame();
@@ -792,10 +821,10 @@ void drawHistory() {
     int lineH  = LINE_H_LARGE;
     int maxVis = histH / lineH;
 
-    // On C3: slot 0 = model heading, last slot = inline input prompt.
+    // On C3: last slot = inline input prompt.
     int histSlots = maxVis;
 #ifdef TARGET_C3
-    histSlots = maxVis - 2;
+    histSlots = maxVis - 1;
 #endif
 #ifdef TARGET_EPAPER
     // No heading row. Input row fixed at screen bottom: inputY = SCREEN_H - lineH.
@@ -803,7 +832,14 @@ void drawHistory() {
     const int inputY = SCREEN_H - lineH;   // bottom input row
     histSlots = inputY / lineH;             // chat rows above input
 #endif
-    int firstIdx = lineCount - histSlots - scrollOffset;
+    // visCount: effective line count for history rendering.
+    // For P3: if user prompt is held in the input row, exclude it from history.
+    int visCount = lineCount;
+#ifdef TARGET_P3
+    bool p3ShowPromptInRow = p3PromptInInputRow;
+    if (p3ShowPromptInRow) { p3PromptInInputRow = false; visCount = lineCount - 1; }
+#endif
+    int firstIdx = visCount - histSlots - scrollOffset;
     if (firstIdx < 0) firstIdx = 0;
 
 #ifdef TARGET_EPAPER
@@ -835,12 +871,6 @@ void drawHistory() {
                 tft.u8g2.setCursor(2, y + EPD_FONT_ASCENT);
             }
             tft.u8g2.print(lines[idx]);
-        } else if (slot == 0 && epdShowModel) {
-            const char* ml = useGrok ? "Grok 4.1 Fast" : useGroq ? "Groq OSS-120b" : GEMINI_MODEL;
-            tft.u8g2.setFont(EPD_FONT);
-            int32_t w = (int32_t)tft.u8g2.getUTF8Width(ml);
-            tft.u8g2.setCursor(SCREEN_W - (int)w - 2, 1 + EPD_FONT_ASCENT);
-            tft.u8g2.print(ml);
         }
     };
 
@@ -924,27 +954,13 @@ void drawHistory() {
     // Pre-fill background before any sprite push.
     tft.fillRect(0, 0, SCREEN_W, histH, bg);
 
-    // Slot 0: model heading — lineH+4 tall to avoid clipping descenders (g, q, y).
-    // Drawn in its own create/delete pass so no two sprites are alive simultaneously.
-    if (spr.createSprite(SCREEN_W, lineH + 4)) {
-        FONT_LOAD(spr);
-        const char* modelLabel = useGrok ? "Grok 4.1 Fast" :
-                                 useGroq ? "Groq OSS-120b" : GEMINI_MODEL;
-        spr.fillSprite(bg);
-        spr.setTextColor(invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
-        spr.drawString(modelLabel, 2, 0);
-        FONT_UNLOAD(spr);
-        spr.pushSprite(0, 0);
-        spr.deleteSprite();
-    }
-
     if (spr.createSprite(SCREEN_W, lineH)) {
         FONT_LOAD(spr);
         spr.setTextWrap(false);
 
         for (int i = 0; i < histSlots; i++) {
             spr.fillSprite(bg);
-            if ((firstIdx + i) < lineCount) {
+            if ((firstIdx + i) < visCount) {
                 int idx = firstIdx + i;
                 uint16_t col = lineColor[idx];
                 if (invertDisplay && col != COL_ERROR) {
@@ -959,12 +975,24 @@ void drawHistory() {
                     spr.drawString(lines[idx], 2, 0);
                 }
             }
-            spr.pushSprite(0, (i + 1) * lineH);  // +1: slot 0 is the heading
+            spr.pushSprite(0, i * lineH);
         }
 
-        // Input line — always the last visible slot
+        // Input line — always the last visible slot.
+        // P3: if user prompt is held here, show it right-aligned instead of "> inputBuf".
         {
             spr.fillSprite(bg);
+#ifdef TARGET_P3
+            if (p3ShowPromptInRow) {
+                uint16_t col = invertDisplay ? COL_USER_LIGHT : TFT_CYAN;
+                spr.setTextColor(col, bg);
+                spr.setTextDatum(TR_DATUM);
+                spr.drawString(p3PromptBuf, SCREEN_W - 2, 0);
+                spr.setTextDatum(TL_DATUM);
+                spr.pushSprite(0, (maxVis - 1) * lineH);
+                goto input_row_done;
+            }
+#endif
             spr.setTextColor(wifiHealthy ? TFT_DARKGREY : TFT_RED, bg);
             spr.drawString("> ", 2, 0);
             int promptW = spr.textWidth("> ");
@@ -988,9 +1016,21 @@ void drawHistory() {
             strncpy(preCur, inputBuf + start, inputCursor - start);
             int curX = 2 + promptW + spr.textWidth(preCur);
             spr.fillRect(curX, 2, 1, lineH - 4, invertDisplay ? TFT_DARKGREY : TFT_YELLOW);
-            spr.pushSprite(0, (maxVis - 1) * lineH);  // last slot, after heading + histSlots chat lines
+            spr.pushSprite(0, (maxVis - 1) * lineH);
         }
-
+#ifdef TARGET_P3
+        input_row_done:;
+#endif
+#ifdef TARGET_P3
+        // Show model name on blank chat page until first AI response.
+        if (p3ShowModel && visCount == 0) {
+            const char* ml = useGrok ? "Grok 4.1 Fast" : useGroq ? "Groq OSS-120b" : GEMINI_MODEL;
+            spr.fillSprite(bg);
+            spr.setTextColor(invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
+            spr.drawString(ml, 2, 0);
+            spr.pushSprite(0, 0);
+        }
+#endif
         FONT_UNLOAD(spr);
         spr.deleteSprite();
 
@@ -1006,7 +1046,7 @@ void drawHistory() {
 
     fontOn();
     tft.setTextWrap(false);
-    for (int i = 0; i < maxVis && (firstIdx + i) < lineCount; i++) {
+    for (int i = 0; i < maxVis && (firstIdx + i) < visCount; i++) {
         int idx = firstIdx + i;
         uint16_t col = lineColor[idx];
         if (invertDisplay && col != COL_ERROR) {
@@ -1110,7 +1150,7 @@ void addMessage(bool isUser, bool isError, const char* text, bool displayOnly = 
     historyBytes += len;
     historyCount++;
     scrollOffset = 0;   // auto-scroll to bottom
-#ifdef TARGET_EPAPER
+#if defined(TARGET_EPAPER) || defined(TARGET_P3)
     int prevLineCount = lineCount;
 #endif
     rebuildLines();
@@ -1132,6 +1172,10 @@ void addMessage(bool isUser, bool isError, const char* text, bool displayOnly = 
         strncpy(epdPromptBuf, lines[lineCount - 1], 127);
         epdPromptBuf[127] = '\0';
     }
+#endif
+// P3: user message goes straight to history (bottom line); no input-row trick needed.
+#ifdef TARGET_P3
+    if (!isUser) p3ShowModel = false;   // first AI response: clear model name banner
 #endif
     drawHistory();
 }
@@ -1164,6 +1208,14 @@ void enterPassword(const char* ssidPrompt, char* out) {
             tft.u8g2.setCursor(2, 1 + FONT_LINE_H + EPD_FONT_ASCENT);
             tft.u8g2.print(ssidPrompt);
             tft.endFrame();
+        }
+#elif defined(TARGET_P3)
+        {
+            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+            uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
+            tft.fillScreen(bg);
+            c3Line(0,            "Password for:", invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
+            c3Line(FONT_LINE_H,  ssidPrompt,     fg, bg);
         }
 #else
         // Use sprite rendering for all rows — fillRect is unreliable on C3 for large areas
@@ -1291,12 +1343,19 @@ bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
         tft.u8g2.print(wifiMsg);
         tft.endFrame();
 #else
-        fontOn();
-        tft.setTextColor(TFT_NAVY, TFT_WHITE);
-        char wifiMsg[80];
-        snprintf(wifiMsg, sizeof(wifiMsg), "Connecting: %.55s...", ssid);
-        tft.drawString(wifiMsg, 2, 0);
-        fontOff();
+        {
+            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+            tft.fillScreen(bg);
+            char wifiMsg[80];
+            snprintf(wifiMsg, sizeof(wifiMsg), "Connecting: %.55s...", ssid);
+#ifdef TARGET_C3
+            c3Line(0, wifiMsg, invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
+#else
+            tft.setTextFont(1);
+            tft.setTextColor(invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
+            tft.drawString(wifiMsg, 2, 0);
+#endif
+        }
 #endif
     }
     WiFi.mode(WIFI_STA);
@@ -1333,10 +1392,17 @@ void selectAP() {
             tft.u8g2.print("Scanning WiFi...");
             tft.endFrame();
 #else
-            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-            tft.fillScreen(bg);
-            fontOff(); uiFontOn(); tft.setTextColor(invertDisplay ? TFT_BLACK : TFT_YELLOW, bg);
-            tft.drawString("Scanning WiFi...", 2, 0);
+            {
+                uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+                tft.fillScreen(bg);
+#ifdef TARGET_C3
+                c3Line(0, "Scanning WiFi...", invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
+#else
+                tft.setTextFont(1);
+                tft.setTextColor(invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
+                tft.drawString("Scanning WiFi...", 2, 0);
+#endif
+            }
 #endif
         }
 
@@ -1357,8 +1423,10 @@ void selectAP() {
 #else
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillScreen(bg);
+            tft.setTextFont(1);
             tft.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
-            tft.drawString("No networks found. Tap to retry.", 2, 0);
+            tft.drawString("No networks found.", 2, 0);
+            tft.drawString("Press any key to retry.", 2, FONT_LINE_H);
 #endif
             { InputEvent ev; while (!halPollInput(&ev)) delay(10); }
             continue;
@@ -1426,12 +1494,19 @@ void selectAP() {
                 tft.endFrame();
             }
 #else
-            uint16_t conBg = invertDisplay ? COL_INVERT_BG : COL_BG;
-            tft.fillScreen(conBg);
-            uiFontOn(); tft.setTextColor(TFT_BLUE, conBg);
-            char msg[80]; snprintf(msg, sizeof(msg), "Connecting: %.55s...", selSsid);
-            tft.drawString(msg, 2, 0);
-            uiFontOff();
+            {
+                uint16_t conBg = invertDisplay ? COL_INVERT_BG : COL_BG;
+                tft.fillScreen(conBg);
+                char msg[80]; snprintf(msg, sizeof(msg), "Connecting: %.55s...", selSsid);
+#ifdef TARGET_C3
+                c3Line(0, msg, invertDisplay ? TFT_DARKGREEN : TFT_GREEN, conBg);
+#else
+                tft.setTextFont(1);
+                tft.setTextColor(invertDisplay ? TFT_DARKGREEN : TFT_GREEN, conBg);
+                tft.drawString(msg, 2, 0);
+                uiFontOff();
+#endif
+            }
 #endif
 
             bool ok = connectWiFi(selSsid, pass);
@@ -2183,6 +2258,9 @@ String callGroq(const char* prompt) {
 
 // --- Send flow ---
 void showThinking() {
+#ifdef TARGET_P3
+    return;   // P3: user prompt already on bottom history line; no indicator needed
+#endif
 #ifdef TARGET_C3
     showStatusLine("Thinking...", TFT_DARKGREY);
     return;
@@ -2494,6 +2572,9 @@ void selectModel() {
             if (loadSession()) {
                 epdMsgPending = true;
                 epdShowModel  = false;
+#ifdef TARGET_P3
+                p3PromptInInputRow = false;
+#endif
                 drawHistory();
                 return;
             }
@@ -2681,7 +2762,11 @@ void setup() {
     rebuildLines();
 #ifdef TARGET_EPAPER
     epdMsgPending = true;   // bypass rate limit — initial render must always go through
-    epdShowModel  = true;
+    epdShowModel  = false;
+#endif
+#ifdef TARGET_P3
+    p3PromptInInputRow = false;
+    p3ShowModel        = true;
 #endif
     drawHistory();
 
@@ -2778,7 +2863,11 @@ void loop() {
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
                 int visSlots  = maxVis - 2;  // slot 0 = heading, last = input
+#ifdef TARGET_P3
+                scrollOffset  = max(0, scrollOffset - visSlots);
+#else
                 scrollOffset  = max(0, scrollOffset - visSlots / 2);
+#endif
 #else
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
@@ -2807,7 +2896,11 @@ void loop() {
                 int maxVis    = histH / lineH;
                 int visSlots  = maxVis - 2;
                 int maxScroll = max(0, lineCount - visSlots);
+#ifdef TARGET_P3
+                scrollOffset  = min(scrollOffset + visSlots, maxScroll);
+#else
                 scrollOffset  = min(scrollOffset + visSlots / 2, maxScroll);
+#endif
 #else
                 int histH     = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
                 int maxVis    = histH / lineH;
@@ -2916,7 +3009,10 @@ do_model_menu:
                 rebuildLines();
 #ifdef TARGET_EPAPER
                 epdMsgPending = true;   // bypass rate limit — model change must render immediately
-                epdShowModel  = true;
+                epdShowModel  = false;
+#endif
+#ifdef TARGET_P3
+                p3ShowModel = true;
 #endif
                 drawHistory();
 #ifndef TARGET_EPAPER

@@ -1,5 +1,9 @@
 #pragma once
 // font.h — central font selection for all display code
+// Free_Fonts.h: TFT_eSPI GFX Free Font short-name defines (FF1..FF48, FSS9, FSSB9, TT1, etc.)
+#ifndef TARGET_EPAPER
+#  include "Free_Fonts.h"
+#endif
 // 240326 Added: #define FONT_BUILTIN_16PX for TFT_eSPI built-in Font 2 (16px, ASCII-only, no flash overhead)
 // 240326 Added: #define FONT_18PX to switch between 12px (default) and 18px smooth font system-wide
 //
@@ -10,7 +14,14 @@
 //#define FONT_BUILTIN_16PX
 //#define FONT_18PX
 
-#ifdef FONT_BUILTIN_16PX
+#ifdef TARGET_P3
+// P3 284×76 landscape: use TFT_eSPI built-in Font 1 (8px, ASCII). Gives ~8 chat lines.
+#  define FONT_LINE_H  8
+#  define FONT_TXT_H   8
+#  define FONT_TXT_W   6
+#  define FONT_LOAD(obj)   (obj).setTextFont(1)
+#  define FONT_UNLOAD(obj) ((void)0)
+#elif defined(FONT_BUILTIN_16PX)
 #  define FONT_LINE_H 16
 #  define FONT_TXT_H  16
 #  define FONT_TXT_W   8
