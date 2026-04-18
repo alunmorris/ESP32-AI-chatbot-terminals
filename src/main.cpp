@@ -2488,6 +2488,10 @@ static const ModelDef MODEL_DEFS[] = {
 };
 static const int NUM_MODELS = (int)(sizeof(MODEL_DEFS) / sizeof(MODEL_DEFS[0]));
 
+#ifdef TARGET_EPAPER
+void runMicroPythonRepl();  // defined in repl_upy.cpp
+#endif
+
 void showModelChoices(bool sessionAvail = false) {
     char buf[40];  // longest entry: "5 Gemini 3.1 Flash Lite" = well under 40
     uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
@@ -2532,7 +2536,10 @@ void showModelChoices(bool sessionAvail = false) {
         if (sessionAvail) {
             tft.u8g2.setCursor(2, 1 + optY + EPD_FONT_ASCENT);
             tft.u8g2.print("R Resume last session");
+            optY += LINE_H_LARGE;
         }
+        tft.u8g2.setCursor(2, 1 + optY + EPD_FONT_ASCENT);
+        tft.u8g2.print("M MicroPython REPL");
     }
     tft.endFrame();
 #elif defined(TARGET_C3)
@@ -2622,6 +2629,11 @@ void selectModel() {
             return;
         }
 #ifdef TARGET_EPAPER
+        if (ch == 'm' || ch == 'M') {
+            runMicroPythonRepl();
+            showModelChoices(sessionAvail);
+            continue;
+        }
         if (ch == 'r' || ch == 'R') {
             if (loadSession()) {
                 epdMsgPending = true;

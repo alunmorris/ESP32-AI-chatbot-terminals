@@ -176,6 +176,7 @@ static void hidNotifyCB(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, 
         if (code == 0x39) { capsLock = !capsLock; }                     // Caps Lock toggle
         else if (ctrl && code == 0x11) { ev.type = INPUT_NEW_CONV; }   // Ctrl+N
         else if (ctrl && code == 0x10) { ev.type = INPUT_MORE; }       // Ctrl+M
+        else if (ctrl && code == 0x07) { ev.type = INPUT_CTRL_D; }    // Ctrl+D — exit REPL
         else if (code == 0x52) { ev.type = INPUT_SCROLL_DOWN; }        // ↑ = scroll toward newer
         else if (code == 0x51) { ev.type = INPUT_SCROLL_UP; }          // ↓ = scroll toward older
         else if (code == 0x50) { ev.type = INPUT_CURSOR_LEFT; }        // ← = move cursor left

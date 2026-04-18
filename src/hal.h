@@ -21,6 +21,7 @@ enum InputEventType {
     INPUT_CURSOR_RIGHT, // C3: → arrow key
     INPUT_MODEL_MENU,   // S2: Home key — re-enter model selection
     INPUT_DELETE,       // S2: Del key — forward-delete character at cursor
+    INPUT_CTRL_D,       // C3: Ctrl+D — exit MicroPython REPL
 };
 
 struct InputEvent {
