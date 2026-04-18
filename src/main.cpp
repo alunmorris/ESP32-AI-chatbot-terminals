@@ -855,11 +855,11 @@ void drawHistory() {
             return;
         }
         epdMsgPending = false;
-        // Full refresh every 20 partial updates, or when explicitly needed (first render etc.)
+        // Full refresh every 10 partial updates, or when explicitly needed (first render etc.)
         doFullRefresh = (epdPartialCount == 0);
         if (doFullRefresh) {
             epdLastFullMs = now;
-            epdPartialCount = 20;
+            epdPartialCount = 10;
         } else {
             epdPartialCount--;
         }
