@@ -47,6 +47,9 @@
 #elif defined(EPD_SIZE_240x416)
 #  define EPD_FONT          u8g2_font_t0_13b_tf
 #  define EPD_FONT_USER     u8g2_font_t0_13_tf
+#  define EPD_FONT_HEADER   u8g2_font_helvB18_tf  // larger title font for menu header
+#  define EPD_FONT_HDR_ASCENT  18                 // baseline offset for helvB18 (ascent ~17px)
+#  define EPD_FONT_HDR_LINE_H  24                 // full line height for helvB18
 #  define EPD_FONT_ASCENT   8
 #  define FONT_LINE_H      13
 #else                           // 200x200

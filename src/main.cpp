@@ -2503,15 +2503,26 @@ void showModelChoices(bool sessionAvail = false) {
 #elif defined(TARGET_EPAPER)
     tft.beginFrame();
     tft.epd.fillScreen(EPD_C_WHITE);
-    tft.u8g2.setFont(EPD_FONT);
     tft.u8g2.setForegroundColor(EPD_C_BLACK);
     tft.u8g2.setBackgroundColor(EPD_C_WHITE);
+#ifdef EPD_FONT_HEADER
+    tft.u8g2.setFont(EPD_FONT_HEADER);
+    tft.u8g2.setCursor(2, 1 + EPD_FONT_HDR_ASCENT);
+    tft.u8g2.print("Paper AI Remote Terminal");
+    tft.u8g2.setFont(EPD_FONT);
+    tft.u8g2.setCursor(2, 1 + EPD_FONT_HDR_LINE_H + LINE_H_LARGE + EPD_FONT_ASCENT);
+    tft.u8g2.print("Select AI model:");
+    {
+        int optY = EPD_FONT_HDR_LINE_H + 2 * LINE_H_LARGE;
+#else
+    tft.u8g2.setFont(EPD_FONT);
     tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
     tft.u8g2.print("Paper AI Remote Terminal");
     tft.u8g2.setCursor(2, 1 + 2 * LINE_H_LARGE + EPD_FONT_ASCENT);
     tft.u8g2.print("Select AI model:");
     {
         int optY = 3 * LINE_H_LARGE;
+#endif
         for (int i = 0; i < NUM_MODELS; i++) {
             snprintf(buf, sizeof(buf), "%c %s", MODEL_DEFS[i].key, MODEL_DEFS[i].name);
             tft.u8g2.setCursor(2, 1 + optY + EPD_FONT_ASCENT);
