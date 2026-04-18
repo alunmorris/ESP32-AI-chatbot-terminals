@@ -53,7 +53,7 @@ static void replPushRow(const char* txt) {
 
 // --- Render visible rows to e-paper -----------------------------------
 static void replRedraw(const char* inputLine, int cursor) {
-    tft.beginFrame();
+    tft.beginPartialFrame(0, 0, EPD_WIDTH, EPD_HEIGHT);
     tft.fillScreen(EPD_C_WHITE);
     tft.u8g2.setFont(EPD_FONT);
     tft.u8g2.setForegroundColor(EPD_C_BLACK);
@@ -187,8 +187,8 @@ void runMicroPythonRepl() {
         if (redraw) replRedraw(inputLine, cursorPos);
     }
 
-    // Full refresh on exit to clear REPL content before model menu redraws
-    tft.beginFrame();
+    // Clear screen before model menu redraws (partial is fine — menu will redraw all content)
+    tft.beginPartialFrame(0, 0, EPD_WIDTH, EPD_HEIGHT);
     tft.fillScreen(EPD_C_WHITE);
     tft.endFrame();
 }

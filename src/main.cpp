@@ -494,7 +494,7 @@ void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
 #endif
 #ifdef TARGET_EPAPER
     // Compact AP list for 200×200. Header row + up to 8 APs at 12 px each.
-    tft.beginFrame();
+    tft.beginPartialFrame(0, 0, tft.width(), tft.height());
     tft.epd.fillScreen(EPD_C_WHITE);
     tft.u8g2.setFont(EPD_FONT);
     tft.u8g2.setForegroundColor(EPD_C_BLACK);
@@ -1212,7 +1212,7 @@ void enterPassword(const char* ssidPrompt, char* out) {
     {
 #ifdef TARGET_EPAPER
         {
-            tft.beginFrame();
+            tft.beginPartialFrame(0, 0, tft.width(), tft.height());
             tft.epd.fillScreen(EPD_C_WHITE);
             tft.u8g2.setFont(EPD_FONT);
             tft.u8g2.setForegroundColor(EPD_C_BLACK);
@@ -1348,7 +1348,7 @@ bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
 #ifdef TARGET_EPAPER
         char wifiMsg[64];
         snprintf(wifiMsg, sizeof(wifiMsg), "WiFi: %.44s", ssid);
-        tft.beginFrame();
+        tft.beginPartialFrame(0, 0, tft.width(), tft.height());
         tft.epd.fillScreen(EPD_C_WHITE);
         tft.u8g2.setFont(EPD_FONT);
         tft.u8g2.setForegroundColor(EPD_C_BLACK);
@@ -1397,7 +1397,7 @@ void selectAP() {
         WiFi.disconnect(true);  // ensure clean idle state before scan (prev. begin() may leave driver busy)
         {
 #ifdef TARGET_EPAPER
-            tft.beginFrame();
+            tft.beginPartialFrame(0, 0, tft.width(), tft.height());
             tft.epd.fillScreen(EPD_C_WHITE);
             tft.u8g2.setFont(EPD_FONT);
             tft.u8g2.setForegroundColor(EPD_C_BLACK);
@@ -1424,7 +1424,7 @@ void selectAP() {
 
         if (n <= 0) {
 #ifdef TARGET_EPAPER
-            tft.beginFrame();
+            tft.beginPartialFrame(0, 0, tft.width(), tft.height());
             tft.epd.fillScreen(EPD_C_WHITE);
             tft.u8g2.setFont(EPD_FONT);
             tft.u8g2.setForegroundColor(EPD_C_BLACK);
@@ -1498,7 +1498,7 @@ void selectAP() {
             {
                 char msg[64];
                 snprintf(msg, sizeof(msg), "Connecting: %.44s", selSsid);
-                tft.beginFrame();
+                tft.beginPartialFrame(0, 0, tft.width(), tft.height());
                 tft.epd.fillScreen(EPD_C_WHITE);
                 tft.u8g2.setFont(EPD_FONT);
                 tft.u8g2.setForegroundColor(EPD_C_BLACK);
@@ -1535,7 +1535,7 @@ void selectAP() {
             {
                 char failMsg[64];
                 snprintf(failMsg, sizeof(failMsg), "Failed: %.40s", selSsid);
-                tft.beginFrame();
+                tft.beginPartialFrame(0, 0, tft.width(), tft.height());
                 tft.epd.fillScreen(EPD_C_WHITE);
                 tft.u8g2.setFont(EPD_FONT);
                 tft.u8g2.setForegroundColor(EPD_C_BLACK);
@@ -2505,7 +2505,7 @@ void showModelChoices(bool sessionAvail = false) {
     }
     if (invertDisplay) c3Line(optY, "L Light Theme", fg, bg);
 #elif defined(TARGET_EPAPER)
-    tft.beginFrame();
+    tft.beginPartialFrame(0, 0, tft.width(), tft.height());
     tft.epd.fillScreen(EPD_C_WHITE);
     tft.u8g2.setForegroundColor(EPD_C_BLACK);
     tft.u8g2.setBackgroundColor(EPD_C_WHITE);
