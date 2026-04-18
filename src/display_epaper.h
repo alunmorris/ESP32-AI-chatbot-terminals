@@ -1,5 +1,7 @@
 // display_epaper.h — GxEPD2 display wrapper with TFT_eSPI-compatible API
 // Used only when TARGET_EPAPER is defined.
+// 170426 Switch 240x416 to GxEPD2_370_GDEY037T03 (WeAct 3.7"); remove colour inversion (wrong driver caused it)
+// 170426 Add EPD_SIZE_240x416 for WeAct Studio 3.7" GDEY037T03 240×416 B&W panel
 // 120426 200x200: use u8g2_font_t0_13b_tf, u8g2_font_t0_13_tf fonts; 1px top margin on all menus
 // 010426 Change user font to u8g2_font_luBIS08_tf (italic serif)
 // 300326 Initial
@@ -19,30 +21,46 @@
 #define EPD_BUSY  3
 #define EPD_PWR_EN_L 5  // active-low display power enable (P-FET/load switch gate; LOW=on, HIGH=off)
 
-// --- Display size selection (comment out one) ---
+// --- Display size selection (uncomment one) ---
 //#define EPD_SIZE_250x122   // WeAct 2.13" GDEY0213B74 250×122 landscape
-#define EPD_SIZE_200x200   // WeAct 1.54" GDEY0154D67 200×200
+//#define EPD_SIZE_200x200   // WeAct 1.54" GDEY0154D67 200×200
+#define EPD_SIZE_240x416   // WeAct 3.7" GDEY037T03 240×416 portrait
 
 #ifdef EPD_SIZE_250x122
 #  define EPD_WIDTH  250
 #  define EPD_HEIGHT 122
+#elif defined(EPD_SIZE_240x416)
+// Panel scans natively in landscape; setRotation(1) gives logical 416×240.
+#  define EPD_WIDTH  416
+#  define EPD_HEIGHT 240
 #else
 #  define EPD_WIDTH  200
 #  define EPD_HEIGHT 200
 #endif
 
-// --- Font selection (can set larger font for higher-DPI 200×200 panel, but some lines don't fit at present) ---
+// --- Font selection ---
 #ifdef EPD_SIZE_250x122
-#  define EPD_FONT          u8g2_font_helvB08_tf   // AI text — larger for 200×200 DPI
-#  define EPD_FONT_USER     u8g2_font_luBIS08_tf   // user text italic
-#  define EPD_FONT_ASCENT   8    // pixels above baseline (ascent_A)
-#  define FONT_LINE_H      12    // max char height 12 (ascent 10 + descent 2). Gives 10 lines
-#else							//200x200 smaller screen
-#  define EPD_FONT          u8g2_font_t0_13b_tf // or smaller u8g2_font_helvB08_tf   // AI text (bold upright)
-#  define EPD_FONT_USER     u8g2_font_t0_13_tf // or smaller u8g2_font_luBIS08_tf   // user text italic or plain
-#  define EPD_FONT_ASCENT  8    // pixels above baseline (ascent_A)
-#  define FONT_LINE_H      13    // max char height 16 (ascent 13 + descent 3)
+#  define EPD_FONT          u8g2_font_helvB08_tf
+#  define EPD_FONT_USER     u8g2_font_luBIS08_tf
+#  define EPD_FONT_ASCENT   8
+#  define FONT_LINE_H      12
+#elif defined(EPD_SIZE_240x416)
+#  define EPD_FONT          u8g2_font_t0_13b_tf
+#  define EPD_FONT_USER     u8g2_font_t0_13_tf
+#  define EPD_FONT_ASCENT   8
+#  define FONT_LINE_H      13
+#else                           // 200x200
+#  define EPD_FONT          u8g2_font_t0_13b_tf
+#  define EPD_FONT_USER     u8g2_font_t0_13_tf
+#  define EPD_FONT_ASCENT  8
+#  define FONT_LINE_H      13
 #endif
+
+// --- Display colour polarity ---
+// EPD_C_WHITE / EPD_C_BLACK allow per-panel polarity correction if needed.
+// GDEY037T03 has correct polarity (0xFF = white) — no swap needed.
+#define EPD_C_WHITE  GxEPD_WHITE
+#define EPD_C_BLACK  GxEPD_BLACK
 
 // --- Refresh rate limit ---
 // Full refresh cycles through all pixels (~1700 ms, higher voltage) and ages the panel.
@@ -78,14 +96,16 @@ class EpaperDisplay {
 public:
 #ifdef EPD_SIZE_250x122
     GxEPD2_BW<GxEPD2_213_GDEY0213B74, GxEPD2_213_GDEY0213B74::HEIGHT> epd;
+#elif defined(EPD_SIZE_240x416)
+    GxEPD2_BW<GxEPD2_370_GDEY037T03, GxEPD2_370_GDEY037T03::HEIGHT> epd;
 #else
     GxEPD2_BW<GxEPD2_154_GDEY0154D67, GxEPD2_154_GDEY0154D67::HEIGHT> epd;
 #endif
     U8G2_FOR_ADAFRUIT_GFX u8g2;
 
 private:
-    uint16_t _fg   = GxEPD_BLACK;
-    uint16_t _bg   = GxEPD_WHITE;
+    uint16_t _fg   = EPD_C_BLACK;
+    uint16_t _bg   = EPD_C_WHITE;
     uint8_t  _datum = TL_DATUM;
 
     // Map any RGB565 colour to e-paper B&W.
@@ -96,13 +116,15 @@ private:
         uint16_t b =  rgb565        & 0x1F;
         // Rough luminance (max possible: 31*8+63*4+31*8=748)
         uint16_t luma = r * 8 + g * 4 + b * 8;
-        return (luma > 500) ? GxEPD_WHITE : GxEPD_BLACK;
+        return (luma > 500) ? EPD_C_WHITE : EPD_C_BLACK;
     }
 
 public:
     EpaperDisplay()
 #ifdef EPD_SIZE_250x122
         : epd(GxEPD2_213_GDEY0213B74(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY)) {}
+#elif defined(EPD_SIZE_240x416)
+        : epd(GxEPD2_370_GDEY037T03(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY)) {}
 #else
         : epd(GxEPD2_154_GDEY0154D67(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY)) {}
 #endif

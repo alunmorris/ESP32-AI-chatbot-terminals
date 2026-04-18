@@ -413,16 +413,16 @@ void halInit() {
     // Render help text + "Keyboard connection..." + initial status in one full frame.
     // Drawing all static rows together avoids the ~500ms per-row partial refresh delay.
     auto drawBootLine = [&](int row, const char* text) {
-        tft.u8g2.setForegroundColor(GxEPD_BLACK);
-        tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+        tft.u8g2.setForegroundColor(EPD_C_BLACK);
+        tft.u8g2.setBackgroundColor(EPD_C_WHITE);
         tft.u8g2.setCursor(6, row * lineH + EPD_FONT_ASCENT);
         tft.u8g2.print(text);
     };
     tft.beginFrame();
-    tft.epd.fillScreen(GxEPD_WHITE);
-    tft.epd.fillRect(0, 0, tft.epd.width(), lineH, GxEPD_BLACK);
-    tft.u8g2.setForegroundColor(GxEPD_WHITE);
-    tft.u8g2.setBackgroundColor(GxEPD_BLACK);
+    tft.epd.fillScreen(EPD_C_WHITE);
+    tft.epd.fillRect(0, 0, tft.epd.width(), lineH, EPD_C_BLACK);
+    tft.u8g2.setForegroundColor(EPD_C_WHITE);
+    tft.u8g2.setBackgroundColor(EPD_C_BLACK);
     tft.u8g2.setCursor(6, EPD_FONT_ASCENT + 2);  // +2px so title sits clear of the top edge
     tft.u8g2.print("Paper AI Remote Terminal");
     drawBootLine(2, "Chat commands:");
@@ -436,9 +436,9 @@ void halInit() {
     auto bootRow = [&](int row, const char* text) {
         int rowY = row * lineH;
         tft.beginPartialFrame(0, rowY, tft.epd.width(), lineH);
-        tft.epd.fillRect(0, rowY, tft.epd.width(), lineH, GxEPD_WHITE);
-        tft.u8g2.setForegroundColor(GxEPD_BLACK);
-        tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+        tft.epd.fillRect(0, rowY, tft.epd.width(), lineH, EPD_C_WHITE);
+        tft.u8g2.setForegroundColor(EPD_C_BLACK);
+        tft.u8g2.setBackgroundColor(EPD_C_WHITE);
         tft.u8g2.setCursor(6, rowY + EPD_FONT_ASCENT);
         tft.u8g2.print(text);
         tft.endFrame();
@@ -493,10 +493,10 @@ void halInit() {
     if (!connected) {
         // Phase 2: pairing mode — clear screen first, then show pairing prompt.
         tft.beginFrame();
-        tft.epd.fillScreen(GxEPD_WHITE);
-        tft.epd.fillRect(0, 0, tft.epd.width(), lineH, GxEPD_BLACK);
-        tft.u8g2.setForegroundColor(GxEPD_WHITE);
-        tft.u8g2.setBackgroundColor(GxEPD_BLACK);
+        tft.epd.fillScreen(EPD_C_WHITE);
+        tft.epd.fillRect(0, 0, tft.epd.width(), lineH, EPD_C_BLACK);
+        tft.u8g2.setForegroundColor(EPD_C_WHITE);
+        tft.u8g2.setBackgroundColor(EPD_C_BLACK);
         tft.u8g2.setCursor(6, EPD_FONT_ASCENT + 2);
         tft.u8g2.print("PATE32: Paper AI Terminal ESP32");
         drawBootLine(2, "Set keyboard to pairing...");

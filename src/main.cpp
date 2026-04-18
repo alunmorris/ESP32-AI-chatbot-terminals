@@ -1,4 +1,5 @@
 /********** Cheap AI Chat Keyboard — ESP32-C3 + CYD28 + ESP32-S2 Mini **********
+* 170426 Epaper 240x416: use partial update for page renders (no flash); full refresh every 20 updates for ghost clearing
 * 140426 P3/C3: cursor blink 500ms; error text black in light theme; fix chat overflow (evict when line cache full)
 * 140426 P3: AP list via c3Line (fix SPI glitch); dB signal strength; menu clears screen; "L Light Theme"
 * 120426 Epaper: 1px top margin on all menus/pages; shorten text to fit 200x200
@@ -494,10 +495,10 @@ void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
 #ifdef TARGET_EPAPER
     // Compact AP list for 200×200. Header row + up to 8 APs at 12 px each.
     tft.beginFrame();
-    tft.epd.fillScreen(GxEPD_WHITE);
+    tft.epd.fillScreen(EPD_C_WHITE);
     tft.u8g2.setFont(EPD_FONT);
-    tft.u8g2.setForegroundColor(GxEPD_BLACK);
-    tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+    tft.u8g2.setForegroundColor(EPD_C_BLACK);
+    tft.u8g2.setBackgroundColor(EPD_C_WHITE);
     tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
     tft.u8g2.print("Select WiFi network:");
     int maxAPs = min(apCount, (SCREEN_H - 12) / 12);  // header=12px, each AP=12px
@@ -564,10 +565,10 @@ void drawInputBar() {
             int lineH  = LINE_H_LARGE;
             int inputY = SCREEN_H - lineH;   // 106 on 122 px display — fixed at screen bottom
             tft.beginPartialFrame(0, inputY, SCREEN_W, lineH);
-            tft.epd.fillRect(0, inputY, SCREEN_W, lineH, GxEPD_WHITE);
+            tft.epd.fillRect(0, inputY, SCREEN_W, lineH, EPD_C_WHITE);
             tft.u8g2.setFont(EPD_FONT);
-            tft.u8g2.setForegroundColor(GxEPD_BLACK);
-            tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+            tft.u8g2.setForegroundColor(EPD_C_BLACK);
+            tft.u8g2.setBackgroundColor(EPD_C_WHITE);
             tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
             tft.u8g2.print("> ");
             int32_t promptW = tft.textWidth("> ");
@@ -589,7 +590,7 @@ void drawInputBar() {
             char preCur[INPUT_BUF_SIZE] = {0};
             strncpy(preCur, inputBuf + start, inputCursor - start);
             int curX = 2 + (int)promptW + (int)tft.textWidth(preCur);
-            tft.epd.drawLine(curX, inputY + 1, curX, inputY + lineH - 2, GxEPD_BLACK);
+            tft.epd.drawLine(curX, inputY + 1, curX, inputY + lineH - 2, EPD_C_BLACK);
             tft.endFrame();
             return;
         }
@@ -845,6 +846,8 @@ void drawHistory() {
     // Rate-limit full refreshes to protect the panel.
     // Content-triggered refreshes (epdMsgPending) always go through regardless of interval.
     static unsigned long epdLastFullMs = 0;
+    static uint8_t epdPartialCount = 0;  // periodic full refresh to clear ghost accumulation
+    bool doFullRefresh;
     {
         unsigned long now = millis();
         if (!epdMsgPending && (now - epdLastFullMs < EPD_MIN_FULL_REFRESH_MS)) {
@@ -852,7 +855,14 @@ void drawHistory() {
             return;
         }
         epdMsgPending = false;
-        epdLastFullMs = now;
+        // Full refresh every 20 partial updates, or when explicitly needed (first render etc.)
+        doFullRefresh = (epdPartialCount == 0);
+        if (doFullRefresh) {
+            epdLastFullMs = now;
+            epdPartialCount = 20;
+        } else {
+            epdPartialCount--;
+        }
     }
 
     // Helper: render one history slot. Uses EPD_FONT_USER (italic) for user lines.
@@ -880,10 +890,11 @@ void drawHistory() {
         int fi = displayCount - histSlots;
         if (fi < 0) fi = 0;
 
-        tft.beginFrame();
-        tft.epd.fillScreen(GxEPD_WHITE);
-        tft.u8g2.setForegroundColor(GxEPD_BLACK);
-        tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+        if (doFullRefresh) tft.beginFrame();
+        else               tft.beginPartialFrame(0, 0, tft.width(), tft.height());
+        tft.epd.fillScreen(EPD_C_WHITE);
+        tft.u8g2.setForegroundColor(EPD_C_BLACK);
+        tft.u8g2.setBackgroundColor(EPD_C_WHITE);
         for (int i = 0; i < histSlots; i++) renderSlot(i, fi, displayCount);
 
         // Prompt in input row: italic, right-aligned, no cursor line
@@ -896,23 +907,24 @@ void drawHistory() {
     }
 
     // Normal full-screen render (AI response, scroll, model change, etc.)
-    tft.beginFrame();
-    tft.epd.fillScreen(GxEPD_WHITE);
-    tft.u8g2.setForegroundColor(GxEPD_BLACK);
-    tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+    if (doFullRefresh) tft.beginFrame();
+    else               tft.beginPartialFrame(0, 0, tft.width(), tft.height());
+    tft.epd.fillScreen(EPD_C_WHITE);
+    tft.u8g2.setForegroundColor(EPD_C_BLACK);
+    tft.u8g2.setBackgroundColor(EPD_C_WHITE);
     for (int i = 0; i < histSlots; i++) renderSlot(i, firstIdx, lineCount);
 
     // Input row
     {
         tft.u8g2.setFont(EPD_FONT);
         if (epdSleeping) {
-            tft.epd.fillRect(0, inputY, SCREEN_W, lineH + 2, GxEPD_BLACK);
-            tft.u8g2.setForegroundColor(GxEPD_WHITE);
-            tft.u8g2.setBackgroundColor(GxEPD_BLACK);
+            tft.epd.fillRect(0, inputY, SCREEN_W, lineH + 2, EPD_C_BLACK);
+            tft.u8g2.setForegroundColor(EPD_C_WHITE);
+            tft.u8g2.setBackgroundColor(EPD_C_BLACK);
             tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
             tft.u8g2.print("Sleeping - hit WAKE to wake");
-            tft.u8g2.setForegroundColor(GxEPD_BLACK);
-            tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+            tft.u8g2.setForegroundColor(EPD_C_BLACK);
+            tft.u8g2.setBackgroundColor(EPD_C_WHITE);
         } else {
             tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
             tft.u8g2.print("> ");
@@ -934,7 +946,7 @@ void drawHistory() {
             char preCur[INPUT_BUF_SIZE] = {0};
             strncpy(preCur, inputBuf + start, inputCursor - start);
             int curX = 2 + (int)promptW + (int)tft.textWidth(preCur);
-            tft.epd.drawLine(curX, inputY + 1, curX, inputY + lineH - 2, GxEPD_BLACK);
+            tft.epd.drawLine(curX, inputY + 1, curX, inputY + lineH - 2, EPD_C_BLACK);
         }
     }
 
@@ -1201,10 +1213,10 @@ void enterPassword(const char* ssidPrompt, char* out) {
 #ifdef TARGET_EPAPER
         {
             tft.beginFrame();
-            tft.epd.fillScreen(GxEPD_WHITE);
+            tft.epd.fillScreen(EPD_C_WHITE);
             tft.u8g2.setFont(EPD_FONT);
-            tft.u8g2.setForegroundColor(GxEPD_BLACK);
-            tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+            tft.u8g2.setForegroundColor(EPD_C_BLACK);
+            tft.u8g2.setBackgroundColor(EPD_C_WHITE);
             tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
             tft.u8g2.print("Password for:");
             tft.u8g2.setCursor(2, 1 + FONT_LINE_H + EPD_FONT_ASCENT);
@@ -1337,10 +1349,10 @@ bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
         char wifiMsg[64];
         snprintf(wifiMsg, sizeof(wifiMsg), "WiFi: %.44s", ssid);
         tft.beginFrame();
-        tft.epd.fillScreen(GxEPD_WHITE);
+        tft.epd.fillScreen(EPD_C_WHITE);
         tft.u8g2.setFont(EPD_FONT);
-        tft.u8g2.setForegroundColor(GxEPD_BLACK);
-        tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+        tft.u8g2.setForegroundColor(EPD_C_BLACK);
+        tft.u8g2.setBackgroundColor(EPD_C_WHITE);
         tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
         tft.u8g2.print(wifiMsg);
         tft.endFrame();
@@ -1386,10 +1398,10 @@ void selectAP() {
         {
 #ifdef TARGET_EPAPER
             tft.beginFrame();
-            tft.epd.fillScreen(GxEPD_WHITE);
+            tft.epd.fillScreen(EPD_C_WHITE);
             tft.u8g2.setFont(EPD_FONT);
-            tft.u8g2.setForegroundColor(GxEPD_BLACK);
-            tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+            tft.u8g2.setForegroundColor(EPD_C_BLACK);
+            tft.u8g2.setBackgroundColor(EPD_C_WHITE);
             tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
             tft.u8g2.print("Scanning WiFi...");
             tft.endFrame();
@@ -1413,10 +1425,10 @@ void selectAP() {
         if (n <= 0) {
 #ifdef TARGET_EPAPER
             tft.beginFrame();
-            tft.epd.fillScreen(GxEPD_WHITE);
+            tft.epd.fillScreen(EPD_C_WHITE);
             tft.u8g2.setFont(EPD_FONT);
-            tft.u8g2.setForegroundColor(GxEPD_BLACK);
-            tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+            tft.u8g2.setForegroundColor(EPD_C_BLACK);
+            tft.u8g2.setBackgroundColor(EPD_C_WHITE);
             tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
             tft.u8g2.print("No networks found.");
             tft.u8g2.setCursor(2, 1 + FONT_LINE_H + EPD_FONT_ASCENT);
@@ -1487,10 +1499,10 @@ void selectAP() {
                 char msg[64];
                 snprintf(msg, sizeof(msg), "Connecting: %.44s", selSsid);
                 tft.beginFrame();
-                tft.epd.fillScreen(GxEPD_WHITE);
+                tft.epd.fillScreen(EPD_C_WHITE);
                 tft.u8g2.setFont(EPD_FONT);
-                tft.u8g2.setForegroundColor(GxEPD_BLACK);
-                tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+                tft.u8g2.setForegroundColor(EPD_C_BLACK);
+                tft.u8g2.setBackgroundColor(EPD_C_WHITE);
                 tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
                 tft.u8g2.print(msg);
                 tft.endFrame();
@@ -1524,10 +1536,10 @@ void selectAP() {
                 char failMsg[64];
                 snprintf(failMsg, sizeof(failMsg), "Failed: %.40s", selSsid);
                 tft.beginFrame();
-                tft.epd.fillScreen(GxEPD_WHITE);
+                tft.epd.fillScreen(EPD_C_WHITE);
                 tft.u8g2.setFont(EPD_FONT);
-                tft.u8g2.setForegroundColor(GxEPD_BLACK);
-                tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+                tft.u8g2.setForegroundColor(EPD_C_BLACK);
+                tft.u8g2.setBackgroundColor(EPD_C_WHITE);
                 tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
                 tft.u8g2.print(failMsg);
                 tft.u8g2.setCursor(2, 1 + FONT_LINE_H + EPD_FONT_ASCENT);
@@ -2490,10 +2502,10 @@ void showModelChoices(bool sessionAvail = false) {
     if (invertDisplay) c3Line(optY, "L Light Theme", fg, bg);
 #elif defined(TARGET_EPAPER)
     tft.beginFrame();
-    tft.epd.fillScreen(GxEPD_WHITE);
+    tft.epd.fillScreen(EPD_C_WHITE);
     tft.u8g2.setFont(EPD_FONT);
-    tft.u8g2.setForegroundColor(GxEPD_BLACK);
-    tft.u8g2.setBackgroundColor(GxEPD_WHITE);
+    tft.u8g2.setForegroundColor(EPD_C_BLACK);
+    tft.u8g2.setBackgroundColor(EPD_C_WHITE);
     tft.u8g2.setCursor(2, 1 + EPD_FONT_ASCENT);
     tft.u8g2.print("Paper AI Remote Terminal");
     tft.u8g2.setCursor(2, 1 + 2 * LINE_H_LARGE + EPD_FONT_ASCENT);
@@ -2696,12 +2708,12 @@ void setup() {
 #endif
     tft.init();
 #ifdef TARGET_EPAPER
-    tft.setRotation(1);  // landscape (250 wide × 122 tall)
+    tft.setRotation(1);  // landscape: physical scan is 416×240; matches EPD_WIDTH/HEIGHT
     if (!halIsDeepSleepWake()) {
         // Initial full-screen white clear — required before any partial updates on cold boot.
         // Skip on deep sleep wake: display retains image and selectModel() does its own full refresh.
         tft.beginFrame();
-        tft.epd.fillScreen(GxEPD_WHITE);
+        tft.epd.fillScreen(EPD_C_WHITE);
         tft.endFrame();
     }
 #elif defined(TARGET_P3)
