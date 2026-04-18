@@ -196,12 +196,15 @@ void runMicroPythonRepl() {
 #ifdef MICROPYTHON_EMBED
             mp_embed_exec_str(inputLine);
             if (outLineLen > 0) replFlushLine();
+#else
+            if (inputLen > 0)
+                replPuts("[MicroPython not built — see repl_upy.cpp]");
 #endif
             inputLine[0] = '\0';
             inputLen  = 0;
             cursorPos = 0;
-            // Full-screen partial to show new scrollback line.
-            replRedrawFull(inputLine, /*useFullRefresh=*/false);
+            // Full refresh to guarantee the new scrollback lines are clearly visible.
+            replRedrawFull(inputLine, /*useFullRefresh=*/true);
         }
     }
 }
