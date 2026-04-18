@@ -918,7 +918,7 @@ void drawHistory() {
     {
         tft.u8g2.setFont(EPD_FONT);
         if (epdSleeping) {
-            tft.epd.fillRect(0, inputY, SCREEN_W, lineH + 2, EPD_C_BLACK);
+            tft.epd.fillRect(0, inputY - 2, SCREEN_W, lineH + 4, EPD_C_BLACK);
             tft.u8g2.setForegroundColor(EPD_C_WHITE);
             tft.u8g2.setBackgroundColor(EPD_C_BLACK);
             tft.u8g2.setCursor(2, inputY + EPD_FONT_ASCENT);
