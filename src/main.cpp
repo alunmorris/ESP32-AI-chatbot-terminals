@@ -2538,8 +2538,6 @@ void showModelChoices(bool sessionAvail = false) {
             tft.u8g2.print("R Resume last session");
             optY += LINE_H_LARGE;
         }
-        tft.u8g2.setCursor(2, 1 + optY + EPD_FONT_ASCENT);
-        tft.u8g2.print("M MicroPython REPL");
     }
     tft.endFrame();
 #elif defined(TARGET_C3)
