@@ -233,7 +233,8 @@ TFT_eSPI tft = TFT_eSPI();
 
 #ifdef TARGET_EPAPER
 // Set true by addMessage() or scroll handlers to bypass the EPD_MIN_FULL_REFRESH_MS rate limit.
-static bool epdMsgPending       = false;
+static bool    epdMsgPending       = false;
+static uint8_t epdPartialCount    = 0;   // counts down; 0 → force full refresh on next drawHistory()
 static bool epdPromptInInputRow = false;  // short user prompt: replace input row, no scroll
 static char epdPromptBuf[128]   = "";
 static bool epdShowModel        = false;  // show model name until first AI response
@@ -846,7 +847,6 @@ void drawHistory() {
     // Rate-limit full refreshes to protect the panel.
     // Content-triggered refreshes (epdMsgPending) always go through regardless of interval.
     static unsigned long epdLastFullMs = 0;
-    static uint8_t epdPartialCount = 0;  // periodic full refresh to clear ghost accumulation
     bool doFullRefresh;
     {
         unsigned long now = millis();
@@ -2624,6 +2624,9 @@ void selectModel() {
             tft.drawString("Ready.", 2, 2 * LINE_H_LARGE);
             uiFontOff();
 #endif
+#ifdef TARGET_EPAPER
+            epdPartialCount = 0;  // guarantee full refresh on first drawHistory() after model select
+#endif
             return;
         }
 #ifdef TARGET_EPAPER
@@ -2634,6 +2637,7 @@ void selectModel() {
         }
         if (ch == 'r' || ch == 'R') {
             if (loadSession()) {
+                epdPartialCount = 0;  // full refresh on session resume
                 epdMsgPending = true;
                 epdShowModel  = false;
 #ifdef TARGET_P3
