@@ -1125,8 +1125,14 @@ void addMessage(bool isUser, bool isError, const char* text, bool displayOnly = 
                     uint32_t cp = ((c & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
                     if ((cp >= 0x2000 && cp <= 0x200A) || cp == 0x202F || cp == 0x205F)
                         *d++ = ' ';
-                    else if (cp == 0x2010 || cp == 0x2012 || cp == 0x2015 || cp == 0x2212)
+                    else if (cp == 0x2010 || cp == 0x2011 || cp == 0x2012 ||
+                             cp == 0x2013 || cp == 0x2014 || cp == 0x2015 || cp == 0x2212)
                         *d++ = '-';
+                    else if (cp == 0x2018 || cp == 0x2019 || cp == 0x2032 || cp == 0x2035)
+                        *d++ = '\'';
+                    else if (cp == 0x201C || cp == 0x201D || cp == 0x2033 || cp == 0x2036)
+                        *d++ = '"';
+                    else if (cp == 0x2026) { *d++ = '.'; *d++ = '.'; *d++ = '.'; }
                     else if (cp == 0x200B || cp == 0x200C || cp == 0x200D ||
                              cp == 0x2060 || cp == 0xFEFF) { /* drop */ }
                     else if (supportedCodepoint(cp)) {
