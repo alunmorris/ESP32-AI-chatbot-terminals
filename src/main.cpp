@@ -309,6 +309,8 @@ const char* KB_NUM_ALT_DISP[10]  = { "|", "\"", ":", "{", "}", "'", "@", "-", "+
 #define KEY_RADIUS        3     // rounded corner radius for keys
 #define KEY_INSET         1     // inset drawn box by this many px each side (~10% smaller)
 
+#define DEVICE_TITLE  "SLUG - Spartan LLM User Gadget"
+
 // --- Layout metrics ---
 #define LINE_H_LARGE     FONT_LINE_H          // VLW font yAdvance (set in font.h)
 #define LINE_H_SMALL     12                   // DejaVuSansBold10px line height
@@ -2633,13 +2635,13 @@ void selectModel() {
         drawKeyboard();
 #endif
 #if defined(TARGET_C3)
-        c3Line(0,             "CRACK: Cheap Remote AI Chat Keyboard", fg, bg);
+        c3Line(0,             DEVICE_TITLE, fg, bg);
         c3Line(LINE_H_P3,     "",                                     fg, bg);
         c3Line(2 * LINE_H_P3, "Select AI model:",                     fg, bg);
 #else
         uiFontOn();
         tft.setTextColor(fg, bg);
-        tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
+        tft.drawString(DEVICE_TITLE, 2, 0);
         tft.drawString("Select AI model:", 2, 2 * TXT_H + 4);
         uiFontOff();
 #endif
@@ -2672,13 +2674,13 @@ void selectModel() {
             int clearH = kbVisible ? HIST_H_KB_SHOW : HIST_H_KB_HIDE;
             tft.fillRect(0, 0, SCREEN_W, clearH, bg);
 #ifdef TARGET_C3
-            c3Line(0,             "CRACK: Cheap Remote AI Chat Keyboard", TFT_GREEN,    bg);
+            c3Line(0,             DEVICE_TITLE, TFT_GREEN,    bg);
             c3Line(LINE_H_P3,     m.name,                                 TFT_GREEN,    bg);
             c3Line(2*LINE_H_P3,   "Ready.",                               TFT_DARKGREY, bg);
 #else
             uiFontOn();
             tft.setTextColor(TFT_GREEN, bg);
-            tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
+            tft.drawString(DEVICE_TITLE, 2, 0);
             tft.drawString(m.name, 2, LINE_H_LARGE);
             tft.setTextColor(TFT_DARKGREY, bg);
             tft.drawString("Ready.", 2, 2 * LINE_H_LARGE);
@@ -2723,11 +2725,11 @@ void selectModel() {
             drawKeyboard();
 #endif
 #ifdef TARGET_C3
-            c3Line(0,          "CRACK: Cheap Remote AI Chat Keyboard", invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
+            c3Line(0,          DEVICE_TITLE, invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
             c3Line(2 * LINE_H_P3,  "Select AI model:",       invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
 #else
             uiFontOn(); tft.setTextColor(invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
-            tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
+            tft.drawString(DEVICE_TITLE, 2, 0);
             tft.drawString("Select AI model:",       2, 2 * TXT_H + 4);
             uiFontOff();
 #endif
@@ -2739,7 +2741,7 @@ void selectModel() {
             calibrateTouch();
             tft.fillScreen(COL_BG);
             uiFontOn(); tft.setTextColor(TFT_DARKGREY, COL_BG);
-            tft.drawString("CRACK: Cheap Remote AI Chat Keyboard", 2, 0);
+            tft.drawString(DEVICE_TITLE, 2, 0);
             tft.drawString("Select AI model:",       2, 2 * TXT_H);
             uiFontOff();
             drawKeyboard();
