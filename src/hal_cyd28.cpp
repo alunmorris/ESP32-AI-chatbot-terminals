@@ -71,6 +71,7 @@ static unsigned long lastTouchMs = 0;
 extern bool shiftOn;
 extern bool altOn;
 extern bool kbVisible;
+extern bool invertDisplay;
 extern TFT_eSPI tft;
 
 // Forward declarations of main.cpp UI functions called for KB show/hide/shift/alt.
@@ -191,6 +192,10 @@ void calibrateTouch() {
 // Returns false for those — they don't produce app-level events.
 // Returns true with a filled InputEvent for all other input.
 // ============================================================
+
+// Color constants (must match main.cpp)
+#define COL_BG       0x0841   // near-black (dark theme background)
+#define COL_INVERT_BG 0xC618  // light grey (light theme background)
 
 // Screen layout constants (must match main.cpp)
 #define SCREEN_W 320
@@ -365,7 +370,7 @@ bool halPollInput(InputEvent* ev) {
             sx < SCREEN_W - BTN_SHOWKB_X + BTN_SHOWKB_W) {
             // Show KB
             kbVisible = true;
-            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, 0x0841);
+            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, invertDisplay ? COL_INVERT_BG : COL_BG);
             drawHistory(); drawInputBar(); drawKeyboard();
             return false;
         }
@@ -417,7 +422,7 @@ bool halPollInput(InputEvent* ev) {
             }
             if (inRect(sx, sy, HIDE_X, row4Y, HIDE_W, KEY_H - 1)) {
                 kbVisible = false;
-                tft.fillRect(0, 0, SCREEN_W, SCREEN_H, 0x0841);
+                tft.fillRect(0, 0, SCREEN_W, SCREEN_H, invertDisplay ? COL_INVERT_BG : COL_BG);
                 drawHistory(); drawInputBar();
                 return false;
             }
@@ -456,14 +461,14 @@ void pollKBHide() {
     if (kbVisible) {
         if (inRect(sx, sy, HIDE_X, row4Y, HIDE_W, KEY_H - 1)) {
             kbVisible = false;
-            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, 0x0841);
+            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, invertDisplay ? COL_INVERT_BG : COL_BG);
             drawHistory(); drawInputBar();
         }
     } else {
         int barY = IBAR_Y_KB_HIDE, barH = IBAR_H_KB_HIDE;
         if (inRect(sx, sy, SCREEN_W - BTN_SHOWKB_X, barY + BTN_INSET, BTN_SHOWKB_W, barH - BTN_INSET*2)) {
             kbVisible = true;
-            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, 0x0841);
+            tft.fillRect(0, 0, SCREEN_W, SCREEN_H, invertDisplay ? COL_INVERT_BG : COL_BG);
             drawHistory(); drawInputBar(); drawKeyboard();
         }
     }

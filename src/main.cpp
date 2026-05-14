@@ -54,6 +54,10 @@
 #  include <TFT_eSPI.h>
 #  include "font.h"                        // selects 12px or 18px font via FONT_18PX
 #  include "fonts/DejaVuSansBold8px.h"   // VLW smooth font 10px (Unicode)
+#  if !defined(TARGET_C3) && !defined(TARGET_P3) && !defined(TARGET_TRINKET) && !defined(TARGET_S2)
+#    include "images/splash.h"             // SLUG splash 320x117 RGB565
+#    include "images/slugsmall.h"          // SLUGsmall 144x96 RGB565 with transparency
+#  endif
 #endif
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -75,7 +79,11 @@ bool        geminiUseGlobal   = false;  // true → /locations/global/ in path
 bool        useGrok           = false;  // true → route to Grok (xAI) instead of Gemini
 bool        useGroq           = false;  // true → route to Groq instead of Gemini
 // Font selected via FONT_18PX in font.h; FONT_DATA / FONT_LINE_H etc. set there.
-bool        invertDisplay     = true;   // true = Light Theme (light bg, black text); hardware inverts so true=dark appearance
+#ifdef TARGET_C3
+bool        invertDisplay     = true;   // C3/P3: hardware inverts display, so light-theme values appear dark on screen
+#else
+bool        invertDisplay     = false;  // cyd28: TFT_INVERSION_ON corrects panel; dark theme default (false = dark bg)
+#endif
 #ifdef TARGET_C3
 bool              cursorVisible       = true;
 unsigned long     lastCursorToggleMs  = 0;
@@ -122,6 +130,13 @@ void loadWifiCreds() {
         strncpy(wifiPass[i], p.getString(pk, "").c_str(), 63); wifiPass[i][63] = '\0';
     }
     p.end();
+#if defined(WIFI_SSID_DEFAULT) && defined(WIFI_PASS_DEFAULT)
+    if (wifiCredsCount == 0 && strlen(WIFI_SSID_DEFAULT) > 0) {
+        strncpy(wifiSsid[0], WIFI_SSID_DEFAULT, 32); wifiSsid[0][32] = '\0';
+        strncpy(wifiPass[0], WIFI_PASS_DEFAULT, 63); wifiPass[0][63] = '\0';
+        wifiCredsCount = 1;
+    }
+#endif
 }
 
 // Insert ssid+pass at slot 0 (most-recently-used). Shift others down. Cap at WIFI_PREFS_MAX.
@@ -175,6 +190,9 @@ void clearWifiPass(const char* ssid) {
 #ifdef TARGET_P3
 #  define SCREEN_W      284   // ST7789P3 display module (part no.), 284×76 landscape, ESP32-C3
 #  define SCREEN_H       76
+#elif defined(TARGET_TRINKET)
+#  define SCREEN_W      128   // Spotpear 1.44" 128×128 ST7735 mini TV, ESP32-C3
+#  define SCREEN_H      128
 #elif defined(TARGET_EPAPER)
 #  define SCREEN_W      EPD_WIDTH   // set by EPD_SIZE_xxx in display_epaper.h
 #  define SCREEN_H      EPD_HEIGHT
@@ -367,7 +385,7 @@ inline void uiFontOff() {}
 #endif
 
 void drawKey(int x, int y, int w, int h, const char* label, uint16_t face, uint16_t text) {
-    tft.fillRect(x, y, w, h, COL_BG);  // clear cell; COL_BG shows as border around inset box
+    tft.fillRect(x, y, w, h, invertDisplay ? COL_INVERT_BG : COL_BG);  // border behind inset key
     tft.fillRoundRect(x + KEY_INSET, y + KEY_INSET, w - 1 - 2*KEY_INSET, h - 2*KEY_INSET, KEY_RADIUS, face);
     tft.setTextColor(text, face);
     fontOn();
@@ -380,7 +398,7 @@ void drawKey(int x, int y, int w, int h, const char* label, uint16_t face, uint1
 #ifndef TARGET_C3
 void drawKeyboard() {
     if (!kbVisible) return;
-    tft.fillRect(0, KB_Y, SCREEN_W, KB_H, COL_BG);
+    tft.fillRect(0, KB_Y, SCREEN_W, KB_H, invertDisplay ? COL_INVERT_BG : COL_BG);
     int rowStep = KEY_H + KEY_GAP;
     int x;
 
@@ -477,8 +495,8 @@ static void c3Line(int y, const char* text, uint16_t col, uint16_t bg);
 // Draw full-screen AP list. apCount entries from apSsids[]/apRssi[].
 // Rows numbered 1–apCount starting at y=AP_ROW_H (row 0 = header).
 void drawAPList(const char apSsids[][33], const int* apRssi, int apCount) {
-#ifdef TARGET_P3
-    // Compact list for 284×76: header + up to 8 APs at FONT_LINE_H (8px) each.
+#if defined(TARGET_P3) || defined(TARGET_TRINKET)
+    // Compact sprite-based list for small displays (P3: 284×76, Trinket: 128×128).
     {
         uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
         uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
@@ -1364,13 +1382,20 @@ bool connectWiFi(const char* ssid, const char* pass, bool showSplash = false) {
         tft.endFrame();
 #else
         {
-            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
-            tft.fillScreen(bg);
             char wifiMsg[80];
             snprintf(wifiMsg, sizeof(wifiMsg), "Connecting: %.55s...", ssid);
 #ifdef TARGET_C3
+            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+            tft.fillScreen(bg);
             c3Line(0, wifiMsg, invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
+#elif !defined(TARGET_P3) && !defined(TARGET_TRINKET) && !defined(TARGET_S2)
+            // Draw over the white splash without clearing it
+            tft.setTextFont(1);
+            tft.setTextColor(TFT_DARKGREEN, TFT_WHITE);
+            tft.drawString(wifiMsg, 2, 0);
 #else
+            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+            tft.fillScreen(bg);
             tft.setTextFont(1);
             tft.setTextColor(invertDisplay ? TFT_DARKGREEN : TFT_GREEN, bg);
             tft.drawString(wifiMsg, 2, 0);
@@ -1704,10 +1729,10 @@ void showWaiting(const char* msg) {
 #endif
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
-    tft.fillRect(0, barY, SCREEN_W - BTN_SEND_W, barH, COL_IBAR_BG);
+    tft.fillRect(0, barY, SCREEN_W, barH, COL_IBAR_BG);  // hide Send button during wait
     tft.setTextColor(TFT_DARKGREY, COL_IBAR_BG);
     fontOn();
-    tft.drawString(msg, 2, barY + (barH - TXT_H) / 2);
+    tft.drawString(msg, 2, barY + (barH - TXT_H) / 2 - 2);
     fontOff();
 }
 
@@ -2297,10 +2322,10 @@ void showThinking() {
 #endif
     int barY = kbVisible ? IBAR_Y_KB_SHOW : IBAR_Y_KB_HIDE;
     int barH = kbVisible ? IBAR_H_KB_SHOW : IBAR_H_KB_HIDE;
-    tft.fillRect(0, barY, SCREEN_W - BTN_SEND_W, barH, COL_IBAR_BG);
+    tft.fillRect(0, barY, SCREEN_W, barH, COL_IBAR_BG);  // hide Send button during wait
     tft.setTextColor(TFT_DARKGREY, COL_IBAR_BG);
     fontOn();
-    tft.drawString("Thinking...", 2, barY + (barH - TXT_H) / 2);
+    tft.drawString("Thinking...", 2, barY + (barH - TXT_H) / 2 - 2);
     fontOff();
 }
 
@@ -2494,8 +2519,33 @@ static const ModelDef MODEL_DEFS[] = {
 };
 static const int NUM_MODELS = (int)(sizeof(MODEL_DEFS) / sizeof(MODEL_DEFS[0]));
 
-#ifdef TARGET_EPAPER
+#ifdef TARGET_MP
 void runMicroPythonRepl();  // defined in repl_upy.cpp
+#endif
+
+#if !defined(TARGET_C3) && !defined(TARGET_P3) && !defined(TARGET_TRINKET) && !defined(TARGET_S2) && !defined(TARGET_EPAPER)
+void slideOutSlug() {
+    const int imgX0 = SCREEN_W - SLUGSMALL_W;
+    const int imgY  = 20;
+    const unsigned long dur = 1000UL;
+    unsigned long t0 = millis();
+    int prevX = imgX0;
+    while (true) {
+        unsigned long elapsed = millis() - t0;
+        if (elapsed >= dur) break;
+        int x = imgX0 + (int)((long)SLUGSMALL_W * elapsed / dur);
+        if (x > prevX) {
+            uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+            tft.fillRect(prevX, imgY, x - prevX, SLUGSMALL_H, bg);
+            if (x < SCREEN_W)
+                tft.pushImage(x, imgY, SLUGSMALL_W, SLUGSMALL_H, SLUG_SMALL);
+            prevX = x;
+        }
+        delay(16);
+    }
+    uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
+    tft.fillRect(imgX0, imgY, SLUGSMALL_W, SLUGSMALL_H, bg);
+}
 #endif
 
 void showModelChoices(bool sessionAvail = false) {
@@ -2554,6 +2604,7 @@ void showModelChoices(bool sessionAvail = false) {
     }
     if (invertDisplay) c3Line(optY, "L Light Theme", fg, bg);
 #else
+    tft.pushImage(SCREEN_W - SLUGSMALL_W, 20, SLUGSMALL_W, SLUGSMALL_H, SLUG_SMALL);
     uiFontOn();
     tft.setTextColor(fg, bg);
     int optY = 2 * TXT_H + 4;
@@ -2578,6 +2629,9 @@ void selectModel() {
         uint16_t fg = invertDisplay ? TFT_BLACK : TFT_WHITE;
         tft.fillScreen(bg);
         drawInputBar();
+#ifndef TARGET_C3
+        drawKeyboard();
+#endif
 #if defined(TARGET_C3)
         c3Line(0,             "CRACK: Cheap Remote AI Chat Keyboard", fg, bg);
         c3Line(LINE_H_P3,     "",                                     fg, bg);
@@ -2629,18 +2683,23 @@ void selectModel() {
             tft.setTextColor(TFT_DARKGREY, bg);
             tft.drawString("Ready.", 2, 2 * LINE_H_LARGE);
             uiFontOff();
+#  if !defined(TARGET_P3) && !defined(TARGET_TRINKET) && !defined(TARGET_S2)
+            slideOutSlug();
+#  endif
 #endif
 #ifdef TARGET_EPAPER
             epdPartialCount = 0;  // guarantee full refresh on first drawHistory() after model select
 #endif
             return;
         }
-#ifdef TARGET_EPAPER
+#ifdef TARGET_MP
         if (ch == 'm' || ch == 'M') {
             runMicroPythonRepl();
             showModelChoices(sessionAvail);
             continue;
         }
+#endif
+#ifdef TARGET_EPAPER
         if (ch == 'r' || ch == 'R') {
             if (loadSession()) {
                 epdPartialCount = 0;  // full refresh on session resume
@@ -2660,6 +2719,9 @@ void selectModel() {
             uint16_t bg = invertDisplay ? COL_INVERT_BG : COL_BG;
             tft.fillScreen(bg);
             drawInputBar();
+#ifndef TARGET_C3
+            drawKeyboard();
+#endif
 #ifdef TARGET_C3
             c3Line(0,          "CRACK: Cheap Remote AI Chat Keyboard", invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
             c3Line(2 * LINE_H_P3,  "Select AI model:",       invertDisplay ? TFT_BLACK : TFT_WHITE, bg);
@@ -2692,6 +2754,12 @@ void setup() {
 #ifdef DEBUG_SERIAL
     Serial.begin(115200);
 #endif
+#ifdef TARGET_TRINKET
+    pinMode(1, OUTPUT);
+    digitalWrite(1, HIGH);
+    delay(3000);
+    digitalWrite(1, LOW);
+#endif
 
 
 #if defined(TARGET_C3) && !defined(TARGET_EPAPER3V3)
@@ -2701,9 +2769,10 @@ void setup() {
     // 80 MHz: minimum frequency for stable WiFi+BLE radio sync; saves ~10 mA vs 160 MHz default.
     setCpuFrequencyMhz(80);
 #endif
-    Serial.println("[Boot] setup() start");
+    Serial.println("[Boot] setup() start"); Serial.flush();
 
     loadWifiCreds();   // load NVS; shows AP picker on first boot if no credentials stored
+    Serial.println("[Boot] loadWifiCreds done"); Serial.flush();
 
 #ifndef TARGET_C3
     // Hold BOOT button (GPIO0) on power-on to wipe touch calibration back to defaults
@@ -2737,7 +2806,9 @@ void setup() {
         digitalWrite(EPD_RST, HIGH); delay(10);
     }
 #endif
+    Serial.println("[Boot] tft.init..."); Serial.flush();
     tft.init();
+    Serial.println("[Boot] tft.init done"); Serial.flush();
 #ifdef TARGET_EPAPER
     tft.setRotation(1);  // landscape: physical scan is 416×240; matches EPD_WIDTH/HEIGHT
     if (!halIsDeepSleepWake()) {
@@ -2757,15 +2828,21 @@ void setup() {
 #endif
     tft.fillScreen(TFT_BLUE);
     delay(1000);
+#elif defined(TARGET_TRINKET)
+    // ST7735 128×128: square display, no unused GRAM rows. Rotation 0 is portrait-up.
+    tft.setRotation(0);
+    Serial.printf("[TFT] width=%d height=%d (expect %dx%d)\n", tft.width(), tft.height(), SCREEN_W, SCREEN_H); Serial.flush();
 #elif defined(TARGET_C3)
     // ST7789 GRAM is 240col x 320row (portrait-native). Pre-fill all GRAM in
     // rotation 0 (CASET 0..239, RASET 0..319 both valid) so that GRAM rows
     // 240..319 contain COL_BG rather than power-on white. Without this, those
     // rows map to a visible white strip in some landscape rotations.
     tft.setRotation(0);
-    tft.fillScreen(COL_BG);  // writes all 240x320 GRAM cells
-    tft.setRotation(1);      // MX|MV landscape: correct physical orientation
-    Serial.printf("[TFT] width=%d height=%d (expect %dx%d)\n", tft.width(), tft.height(), SCREEN_W, SCREEN_H);
+    Serial.println("[Boot] rot0 done"); Serial.flush();
+    tft.fillScreen(COL_BG);
+    Serial.println("[Boot] fill done"); Serial.flush();
+    tft.setRotation(1);
+    Serial.printf("[TFT] width=%d height=%d (expect %dx%d)\n", tft.width(), tft.height(), SCREEN_W, SCREEN_H); Serial.flush();
 #else
     #ifdef ROTATE_180
         tft.setRotation(3);
@@ -2785,6 +2862,9 @@ void setup() {
     unsigned long splashStart = millis();
 #ifndef TARGET_EPAPER
     tft.fillScreen(TFT_WHITE);
+#  if !defined(TARGET_C3) && !defined(TARGET_P3) && !defined(TARGET_TRINKET) && !defined(TARGET_S2)
+    tft.pushImage(0, SCREEN_H - SLUG_H, SLUG_W, SLUG_H, SLUG_SPLASH);
+#  endif
 #endif
     bool wifiOk = connectWiFi(wifiSsid[0], wifiPass[0], true);
 
@@ -2793,8 +2873,8 @@ void setup() {
     // On normal boot halInit() has already connected BLE; this is a no-op (reconnectTaskHandle set).
     halStartBleReconnect();
 
-    // Splash visible for at least 3 seconds
-    long splashRemain = 3000L - (long)(millis() - splashStart);
+    // Splash visible for at least 2 seconds
+    long splashRemain = 2000L - (long)(millis() - splashStart);
     if (splashRemain > 0) delay(splashRemain);
 #ifndef TARGET_EPAPER
     tft.fillScreen(invertDisplay ? COL_INVERT_BG : COL_BG);  // clear splash
@@ -2823,6 +2903,9 @@ void setup() {
     p3ShowModel        = true;
 #endif
     drawHistory();
+#ifndef TARGET_C3
+    drawKeyboard();
+#endif
 
     lastActivityMs = millis();
 }
