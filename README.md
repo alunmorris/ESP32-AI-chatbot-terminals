@@ -1,5 +1,5 @@
+# ESP32 AI chatbot terminals
 <img width="2043" height="1152" alt="c0770e99-15e4-4bde-a866-f58943980007" src="https://github.com/user-attachments/assets/cba7238e-035c-4b9a-b5a0-673266229c43" />
-# SLUG — AI Chatbot for ESP32
 
 A portable AI chat terminal that runs on several ESP32-based hardware builds. All builds share the same application logic (`main.cpp`) with hardware differences isolated in target-specific HAL files.
 
