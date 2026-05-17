@@ -71,10 +71,10 @@ Uses the S2's USB OTG peripheral in host mode to connect a standard wired USB ke
 
 ---
 
-### `epaper` — ESP32-C3 Supermini + 2.13" B&W E-Paper
+### `epaper` — ESP32-C3 Supermini + B&W E-Paper
 <img width="2507" height="2009" alt="IMG_20260515_075640335_HDR_AE" src="https://github.com/user-attachments/assets/362610c8-58a7-45e2-ac0e-ef710918d328" />
 
-**Hardware:** ESP32-C3 Supermini + Waveshare GDEY0213B74 2.13" B&W e-paper (250×122) + any Bluetooth HID keyboard
+**Hardware:** ESP32-C3 Supermini + Waveshare GDEY0213B74 2.13" B&W e-paper (various sizes )+ any Bluetooth HID keyboard
 
 Full-screen chat on an e-paper display. BLE keyboard pairing works the same as the `c3` build. Always uses the light theme (white background, black text); dark theme toggle has no effect.
 
