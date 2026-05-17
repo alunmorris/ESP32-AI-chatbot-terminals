@@ -40,6 +40,7 @@ Full-screen chat — no on-screen keyboard, so the entire 320×240 display is us
 ---
 
 ### `p3` — ESP32-C3 + ST7789P3 Compact Display
+<img width="3700" height="1707" alt="IMG_20260515_075228541_HDR_AE" src="https://github.com/user-attachments/assets/c56a27a9-5c38-4304-a324-92fd9f2a173a" />
 
 **Hardware:** ESP32-C3 + ST7789P3 284×76 landscape TFT + any Bluetooth HID keyboard
 
@@ -71,6 +72,7 @@ Uses the S2's USB OTG peripheral in host mode to connect a standard wired USB ke
 ---
 
 ### `epaper` — ESP32-C3 Supermini + 2.13" B&W E-Paper
+<img width="2507" height="2009" alt="IMG_20260515_075640335_HDR_AE" src="https://github.com/user-attachments/assets/362610c8-58a7-45e2-ac0e-ef710918d328" />
 
 **Hardware:** ESP32-C3 Supermini + Waveshare GDEY0213B74 2.13" B&W e-paper (250×122) + any Bluetooth HID keyboard
 
